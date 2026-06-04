@@ -5,6 +5,7 @@ Usage:
     headroom wrap copilot -- --model ...    # Start proxy + launch GitHub Copilot CLI
     headroom wrap codex                     # Start proxy + OpenAI Codex CLI
     headroom wrap aider                     # Start proxy + aider
+    headroom wrap opencode                  # Start proxy + OpenCode
     headroom wrap cursor                    # Start proxy + print Cursor config instructions
     headroom wrap openclaw                  # Install + configure OpenClaw plugin
     headroom wrap claude --no-context-tool  # Without CLI context-tool setup
@@ -89,6 +90,14 @@ from headroom.providers.openclaw import (
 from headroom.providers.openclaw import (
     normalize_gateway_provider_ids as _normalize_openclaw_gateway_provider_ids_impl,
 )
+from headroom.providers.opencode import DEFAULT_MODEL as _OPENCODE_DEFAULT_MODEL
+from headroom.providers.opencode import build_config as _build_opencode_config
+from headroom.providers.opencode import build_launch_env as _build_opencode_launch_env
+from headroom.providers.opencode import normalize_model_args as _normalize_opencode_model_args
+from headroom.providers.opencode import (
+    resolve_opencode_copilot_subscription_token_details as _resolve_opencode_copilot_subscription_token_details,
+)
+from headroom.providers.opencode import resolve_wire_api as _resolve_opencode_wire_api
 
 from .main import main
 
@@ -2180,6 +2189,7 @@ def wrap() -> None:
         headroom wrap codex               # OpenAI Codex CLI
         headroom wrap copilot -- --model claude-sonnet-4-20250514
         headroom wrap aider               # Aider
+        headroom wrap opencode            # OpenCode
         headroom wrap cursor              # Cursor (prints config instructions)
         headroom wrap cline               # Cline (VS Code; prints config instructions)
         headroom wrap continue            # Continue (VS Code/JetBrains; injects systemMessage)
@@ -2196,9 +2206,7 @@ def wrap() -> None:
           ANTHROPIC_BASE_URL / OPENAI_BASE_URL yourself.
 
     \b
-    Note: `headroom wrap opencode` does NOT exist. For opencode, run
-    `headroom proxy` and point opencode at it via OPENAI_BASE_URL.
-    `openclaw` is a separate tool — different from opencode.
+    Note: `openclaw` is a separate tool — different from opencode.
     """
 
 
@@ -3061,6 +3069,275 @@ def aider(
         anyllm_provider=anyllm_provider,
         region=region,
     )
+
+
+# =============================================================================
+# OpenCode
+# =============================================================================
+
+
+def _resolve_opencode_binary() -> str | None:
+    """Resolve the OpenCode CLI binary, including the common user install path."""
+    opencode_bin = shutil.which("opencode")
+    if opencode_bin:
+        return opencode_bin
+
+    home_bin = Path.home() / ".opencode" / "bin" / "opencode"
+    if home_bin.exists() and os.access(home_bin, os.X_OK):
+        return str(home_bin)
+
+    return None
+
+
+@wrap.command(context_settings={"ignore_unknown_options": True})
+@click.option("--port", "-p", default=8787, type=int, help="Proxy port (default: 8787)")
+@click.option(
+    "--no-context-tool",
+    "--no-rtk",
+    "no_rtk",
+    is_flag=True,
+    help="Skip CLI context-tool setup",
+)
+@click.option(
+    "--code-graph",
+    is_flag=True,
+    help="Enable code graph indexing via codebase-memory-mcp (optional)",
+)
+@click.option("--no-proxy", is_flag=True, help="Skip proxy startup (use existing proxy)")
+@click.option("--learn", is_flag=True, help="Enable live traffic learning")
+@click.option("--memory", is_flag=True, help="Enable persistent cross-session memory")
+@click.option(
+    "--backend", default=None, help="API backend: 'anthropic', 'anyllm', 'litellm-vertex', etc."
+)
+@click.option("--anyllm-provider", default=None, help="Provider for any-llm backend")
+@click.option("--region", default=None, help="Cloud region for Bedrock/Vertex")
+@click.option(
+    "--model",
+    default=None,
+    help=(
+        "Model id exposed to OpenCode as headroom/<model> "
+        f"(default: HEADROOM_OPENCODE_MODEL or {_OPENCODE_DEFAULT_MODEL})"
+    ),
+)
+@click.option(
+    "--provider-id",
+    default="headroom",
+    show_default=True,
+    help="Temporary OpenCode provider id",
+)
+@click.option(
+    "--wire-api",
+    type=click.Choice(["completions", "responses"]),
+    default=None,
+    help="OpenAI wire API for the generated provider. Defaults to responses for gpt-5* models.",
+)
+@click.option(
+    "--subscription",
+    is_flag=True,
+    help=(
+        "Experimental: forward OpenCode traffic to GitHub Copilot's hosted API using "
+        "a reusable Copilot/GitHub token."
+    ),
+)
+@click.option(
+    "--auth-source",
+    type=click.Choice(["auto", "opencode", "headroom"]),
+    default="auto",
+    show_default=True,
+    help="Copilot token source for --subscription. 'auto' tries OpenCode auth first.",
+)
+@click.option(
+    "--debug-copilot",
+    is_flag=True,
+    help="Print safe Copilot subscription diagnostics and enable proxy-side upstream logging.",
+)
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option("--prepare-only", is_flag=True, hidden=True)
+@click.argument("opencode_args", nargs=-1, type=click.UNPROCESSED)
+def opencode(
+    port: int,
+    no_rtk: bool,
+    code_graph: bool,
+    no_proxy: bool,
+    learn: bool,
+    memory: bool,
+    backend: str | None,
+    anyllm_provider: str | None,
+    region: str | None,
+    model: str | None,
+    provider_id: str,
+    wire_api: str | None,
+    subscription: bool,
+    auth_source: str,
+    debug_copilot: bool,
+    verbose: bool,
+    prepare_only: bool,
+    opencode_args: tuple[str, ...],
+) -> None:
+    """Launch OpenCode through Headroom proxy.
+
+    \b
+    Creates a temporary OpenCode config directory with a custom
+    ``headroom/<model>`` provider that points at the local Headroom proxy.
+    The user's normal ``~/.config/opencode`` files are left untouched.
+
+    \b
+    Examples:
+        headroom wrap opencode
+        headroom wrap opencode --model gpt-4o -- run "explain this repo"
+        headroom wrap opencode --model gpt-5.4 --wire-api responses
+        headroom wrap opencode --subscription --model gpt-4o
+        headroom wrap opencode --subscription --auth-source opencode --model gpt-4o
+        headroom wrap opencode --no-context-tool
+    """
+    provider_id = provider_id.strip() or "headroom"
+    if "/" in provider_id:
+        raise click.ClickException("--provider-id must not contain '/'.")
+
+    default_model = (model or os.environ.get("HEADROOM_OPENCODE_MODEL") or "").strip()
+    if not default_model:
+        default_model = _OPENCODE_DEFAULT_MODEL
+
+    normalized_args, selected_model, normalized_model_arg = _normalize_opencode_model_args(
+        opencode_args,
+        provider_id=provider_id,
+        default_model=default_model,
+    )
+    selected_model = selected_model.strip()
+    if not selected_model:
+        raise click.ClickException("--model must not be empty.")
+    effective_wire_api = _resolve_opencode_wire_api(wire_api, selected_model)
+
+    agents_path: Path | None = Path.cwd() / "AGENTS.md" if not no_rtk else None
+    if not no_rtk:
+        _setup_context_tool_for_agent(
+            agent="opencode",
+            agent_display="OpenCode",
+            marker_path=agents_path,
+            on_rtk_ready=lambda _rtk: _inject_rtk_instructions(
+                cast(Path, agents_path), verbose=verbose
+            ),
+            verbose=verbose,
+        )
+
+    if prepare_only:
+        return
+
+    opencode_bin = _resolve_opencode_binary()
+    if not opencode_bin:
+        click.echo("Error: 'opencode' not found in PATH or ~/.opencode/bin.")
+        click.echo("Install OpenCode: https://opencode.ai/")
+        raise SystemExit(1)
+
+    effective_backend = backend or os.environ.get("HEADROOM_BACKEND")
+    if subscription and effective_backend not in (None, "", "anthropic"):
+        raise click.ClickException(
+            "--subscription routes to GitHub Copilot's hosted API and cannot be combined "
+            "with translated backends such as anyllm or litellm-*."
+        )
+
+    debug_enabled = debug_copilot or copilot_debug_enabled()
+    openai_api_url: str | None = None
+    copilot_proxy_token: str | None = None
+    subscription_resolution = None
+    if subscription:
+        if auth_source in {"auto", "opencode"}:
+            subscription_resolution = _resolve_opencode_copilot_subscription_token_details()
+        if subscription_resolution is None and auth_source in {"auto", "headroom"}:
+            subscription_resolution = resolve_subscription_bearer_token_details()
+        if subscription_resolution is None:
+            opencode_hint = (
+                "Run OpenCode's GitHub Copilot login first"
+                if auth_source == "opencode"
+                else "Run OpenCode's GitHub Copilot login or `copilot auth login` first"
+            )
+            raise click.ClickException(
+                "OpenCode subscription mode requires a reusable GitHub/Copilot bearer "
+                f"token, but none could be resolved from {auth_source}. {opencode_hint}, "
+                "or set GITHUB_COPILOT_TOKEN / GITHUB_COPILOT_GITHUB_TOKEN."
+            )
+
+        copilot_proxy_token = subscription_resolution.token
+        openai_api_url = subscription_resolution.api_url
+        _validate_copilot_subscription_model_available(
+            model=selected_model,
+            token=copilot_proxy_token,
+            api_url=openai_api_url,
+            debug_enabled=debug_enabled,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="headroom-opencode-") as config_dir_raw:
+        config_dir = Path(config_dir_raw)
+        config = _build_opencode_config(
+            port=port,
+            model=selected_model,
+            wire_api=effective_wire_api,
+            provider_id=provider_id,
+        )
+        (config_dir / "opencode.json").write_text(
+            json.dumps(config, indent=2) + "\n", encoding="utf-8"
+        )
+
+        env, env_vars_display = _build_opencode_launch_env(
+            port=port,
+            config_dir=config_dir,
+            model=selected_model,
+            wire_api=effective_wire_api,
+            provider_id=provider_id,
+            environ=os.environ,
+        )
+        if normalized_model_arg:
+            env_vars_display.append(
+                f"OPENCODE_MODEL_ARG_NORMALIZED={provider_id}/{selected_model}"
+            )
+
+        if subscription and openai_api_url:
+            env["GITHUB_COPILOT_API_URL"] = openai_api_url
+            env["OPENAI_TARGET_API_URL"] = openai_api_url
+            env_vars_display.extend(
+                [
+                    "OPENCODE_AUTH_MODE=github-subscription-experimental",
+                    f"COPILOT_PROVIDER_API_URL={openai_api_url}",
+                ]
+            )
+            if debug_enabled:
+                env["HEADROOM_COPILOT_DEBUG"] = "1"
+                env_vars_display.extend(
+                    [
+                        "HEADROOM_COPILOT_DEBUG=1",
+                        f"COPILOT_DEBUG_MODEL={selected_model}",
+                        f"COPILOT_DEBUG_WIRE_API={effective_wire_api}",
+                        f"COPILOT_DEBUG_API_URL={openai_api_url}",
+                        f"COPILOT_DEBUG_TOKEN_SOURCE={subscription_resolution.source}",
+                        f"COPILOT_DEBUG_TOKEN_CONFIDENCE={subscription_resolution.confidence}",
+                        (
+                            "COPILOT_DEBUG_TOKEN_FINGERPRINT="
+                            f"{subscription_resolution.token_fingerprint}"
+                        ),
+                        "COPILOT_DEBUG_TOKEN_EXCHANGE=disabled",
+                        f"COPILOT_DEBUG_PROXY_LOG={_get_log_path()}",
+                    ]
+                )
+
+        _launch_tool(
+            binary=opencode_bin,
+            args=normalized_args,
+            env=env,
+            port=port,
+            no_proxy=no_proxy,
+            tool_label="OPENCODE",
+            env_vars_display=env_vars_display,
+            learn=learn,
+            memory=memory,
+            agent_type="opencode",
+            code_graph=code_graph,
+            backend=backend,
+            anyllm_provider=anyllm_provider,
+            region=region,
+            openai_api_url=openai_api_url,
+            copilot_api_token=copilot_proxy_token,
+            copilot_debug=debug_enabled,
+        )
 
 
 # =============================================================================

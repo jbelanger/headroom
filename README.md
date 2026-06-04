@@ -47,7 +47,7 @@
 
 - **Library** — `compress(messages)` in Python or TypeScript, inline in any app
 - **Proxy** — `headroom proxy --port 8787`, zero code changes, any language
-- **Agent wrap** — `headroom wrap claude|codex|cursor|aider|copilot` in one command
+- **Agent wrap** — `headroom wrap claude|codex|cursor|aider|copilot|opencode` in one command
 - **MCP server** — `headroom_compress`, `headroom_retrieve`, `headroom_stats` for any MCP client
 - **Cross-agent memory** — shared store across Claude, Codex, Gemini, auto-dedup
 - **`headroom learn`** — mines failed sessions, writes corrections to `CLAUDE.md` / `AGENTS.md`
@@ -131,6 +131,7 @@ Reproduce: `python -m headroom.evals suite --tier 1` · [Full benchmarks & metho
 | Cursor      | ●               | prints config — paste once       |
 | Aider       | ●               | starts proxy + launches          |
 | Copilot CLI | ●               | starts proxy + launches          |
+| OpenCode    | ●               | temp config + launches           |
 | OpenClaw    | ●               | installs as ContextEngine plugin |
 
 Any OpenAI-compatible client works via `headroom proxy`. MCP-native: `headroom mcp install`.
