@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Literal
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+from urllib.parse import urlparse
 
 from headroom.copilot_auth import (
     DEFAULT_API_URL as DEFAULT_COPILOT_API_URL,
@@ -225,7 +226,9 @@ def _read_json_object(path: Path) -> dict[str, object] | None:
 
 
 def _normalize_domain(value: str) -> str:
-    return value.replace("https://", "", 1).replace("http://", "", 1).rstrip("/")
+    normalized = value.replace("https://", "", 1).replace("http://", "", 1).rstrip("/")
+    parsed = urlparse(f"https://{normalized}")
+    return (parsed.hostname or normalized.split("/", 1)[0]).lower()
 
 
 def _entry_api_url(auth: dict[str, object]) -> str:
@@ -237,6 +240,9 @@ def _entry_api_url(auth: dict[str, object]) -> str:
 
 def _entry_exchange_url(auth: dict[str, object]) -> str:
     enterprise_url = auth.get("enterpriseUrl")
+    api_url = _entry_api_url(auth)
+    if api_url == DEFAULT_COPILOT_API_URL:
+        return "https://api.github.com/copilot_internal/v2/token"
     domain = _normalize_domain(enterprise_url.strip()) if isinstance(enterprise_url, str) else "github.com"
     return f"https://api.{domain}/copilot_internal/v2/token"
 

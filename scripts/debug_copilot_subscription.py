@@ -312,22 +312,48 @@ def token_candidates(*, allow_secret_store: bool) -> list[TokenCandidate]:
 def opencode_copilot_base(enterprise_url: str | None) -> str:
     if not enterprise_url:
         return DEFAULT_API_URL
-    normalized = enterprise_url.strip().replace("https://", "").replace("http://", "").rstrip("/")
-    return f"https://copilot-api.{normalized}"
+    host = enterprise_host_for_subdomain_urls(enterprise_url)
+    return f"https://copilot-api.{host}" if host else ""
+
+
+def normalize_enterprise_url(enterprise_url: str) -> str:
+    return enterprise_url.strip().replace("https://", "").replace("http://", "").rstrip("/")
+
+
+def enterprise_hostname(enterprise_url: str) -> str:
+    normalized = normalize_enterprise_url(enterprise_url)
+    if not normalized:
+        return ""
+    try:
+        from urllib.parse import urlparse
+
+        return (urlparse(f"https://{normalized}").hostname or normalized.split("/", 1)[0]).lower()
+    except Exception:
+        return normalized.split("/", 1)[0].lower()
+
+
+def enterprise_host_for_subdomain_urls(enterprise_url: str | None) -> str | None:
+    if not enterprise_url:
+        return None
+    host = enterprise_hostname(enterprise_url)
+    if not host or host in {"github.com", "www.github.com", "api.github.com"}:
+        return None
+    return host
 
 
 def copilot_token_exchange_url(enterprise_url: str | None) -> str:
     override = os.environ.get("GITHUB_COPILOT_TOKEN_EXCHANGE_URL", "").strip()
     if override:
         return override
-    domain = (
+    configured = (
         enterprise_url
         or os.environ.get("GITHUB_COPILOT_ENTERPRISE_URL", "").strip()
         or os.environ.get("GITHUB_COPILOT_ENTERPRISE_DOMAIN", "").strip()
-        or "github.com"
     )
-    normalized = domain.strip().replace("https://", "").replace("http://", "").rstrip("/")
-    return f"https://api.{normalized}/copilot_internal/v2/token"
+    host = enterprise_host_for_subdomain_urls(configured)
+    if not host:
+        return DEFAULT_TOKEN_EXCHANGE_URL
+    return f"https://api.{host}/copilot_internal/v2/token"
 
 
 def auth_headers(candidate: TokenCandidate, *, style: str, opencode_user_agent: str) -> dict[str, str]:

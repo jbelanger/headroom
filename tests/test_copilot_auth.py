@@ -128,7 +128,7 @@ def test_resolve_subscription_bearer_token_details_preserves_safe_metadata(
     assert resolution.token_fingerprint == copilot_auth.token_fingerprint("gho-copilot")
 
 
-def test_resolve_subscription_bearer_token_details_prefers_enterprise_api_override(
+def test_resolve_subscription_bearer_token_details_uses_cloud_enterprise_advertised_api(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("GITHUB_COPILOT_API_URL", raising=False)
@@ -154,7 +154,7 @@ def test_resolve_subscription_bearer_token_details_prefers_enterprise_api_overri
     resolution = copilot_auth.resolve_subscription_bearer_token_details()
 
     assert resolution is not None
-    assert resolution.api_url == "https://copilot-api.github.com/enterprises/cbcrc"
+    assert resolution.api_url == "https://api.business.githubcopilot.com"
 
 
 def test_resolve_subscription_bearer_token_details_falls_back_to_model_catalog(
@@ -239,7 +239,7 @@ def test_resolve_subscription_bearer_token_details_exchanges_oauth_candidate(
     }
 
 
-def test_resolve_subscription_exchange_prefers_enterprise_api_override(
+def test_resolve_subscription_exchange_uses_cloud_enterprise_advertised_api(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("GITHUB_COPILOT_API_TOKEN", raising=False)
@@ -264,15 +264,17 @@ def test_resolve_subscription_exchange_prefers_enterprise_api_override(
         "_exchange_token_sync",
         staticmethod(lambda _headers: {"token": "copilot-api"}),
     )
+    monkeypatch.setattr(
+        copilot_auth,
+        "_fetch_copilot_user_info",
+        lambda _token: {"endpoints": {"api": "https://api.business.githubcopilot.com"}},
+    )
 
     resolution = copilot_auth.resolve_subscription_bearer_token_details()
 
     assert resolution is not None
-    assert resolution.api_url == "https://copilot-api.github.com/enterprises/cbcrc"
-    assert (
-        copilot_auth._token_exchange_url()
-        == "https://api.github.com/enterprises/cbcrc/copilot_internal/v2/token"
-    )
+    assert resolution.api_url == "https://api.business.githubcopilot.com"
+    assert copilot_auth._token_exchange_url() == "https://api.github.com/copilot_internal/v2/token"
 
 
 def test_resolve_subscription_bearer_token_details_falls_back_when_exchange_fails(
@@ -530,23 +532,44 @@ def test_is_copilot_api_url_trusts_configured_enterprise_api_url(
     assert not copilot_auth.is_copilot_api_url("https://copilot-api.other.example.com/v1/responses")
 
 
-def test_copilot_api_url_from_enterprise_url_matches_opencode_transform() -> None:
+def test_copilot_api_url_from_enterprise_url_supports_enterprise_server_domain() -> None:
     assert (
-        copilot_auth.copilot_api_url_from_enterprise_url("https://github.com/enterprises/cbcrc/")
-        == "https://copilot-api.github.com/enterprises/cbcrc"
+        copilot_auth.copilot_api_url_from_enterprise_url("https://ghe.example.com/")
+        == "https://copilot-api.ghe.example.com"
     )
 
 
-def test_resolve_copilot_api_url_prefers_enterprise_override(
+def test_copilot_api_url_from_enterprise_url_ignores_github_cloud_enterprise_path() -> None:
+    assert (
+        copilot_auth.copilot_api_url_from_enterprise_url("https://github.com/enterprises/cbcrc/")
+        == copilot_auth.DEFAULT_API_URL
+    )
+
+
+def test_resolve_copilot_api_url_uses_cloud_enterprise_user_info(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("GITHUB_COPILOT_API_URL", raising=False)
     monkeypatch.setenv("GITHUB_COPILOT_ENTERPRISE_URL", "github.com/enterprises/cbcrc")
+    monkeypatch.setattr(
+        copilot_auth,
+        "_fetch_copilot_user_info",
+        lambda _token: {"endpoints": {"api": "https://api.business.githubcopilot.com"}},
+    )
 
     assert (
-        copilot_auth.resolve_copilot_api_url(None)
-        == "https://copilot-api.github.com/enterprises/cbcrc"
+        copilot_auth.resolve_copilot_api_url("gho-oauth")
+        == "https://api.business.githubcopilot.com"
     )
+
+
+def test_resolve_copilot_api_url_prefers_enterprise_server_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GITHUB_COPILOT_API_URL", raising=False)
+    monkeypatch.setenv("GITHUB_COPILOT_ENTERPRISE_URL", "ghe.example.com")
+
+    assert copilot_auth.resolve_copilot_api_url(None) == "https://copilot-api.ghe.example.com"
 
 
 def test_build_copilot_upstream_url_strips_v1_only_for_copilot_hosts(

@@ -146,14 +146,18 @@ headroom wrap copilot --subscription -- --model gpt-4o
 
 This lets Headroom intercept OpenAI-compatible Copilot CLI requests and apply the same proxy compression pipeline before forwarding to GitHub Copilot's hosted API. The wrapper exchanges the reusable GitHub OAuth token for Copilot's short-lived API token using the Copilot Chat headers, resolves the account-specific Copilot API endpoint, and prints it as `COPILOT_PROVIDER_API_URL=...` during launch.
 
-For Copilot Business/Enterprise accounts that need an enterprise URL, set one
-of these before launching:
+For GitHub Enterprise Server or custom-domain Copilot deployments, set the
+deployment domain before launching:
 
 ```bash
-export GITHUB_COPILOT_ENTERPRISE_URL=github.com/enterprises/your-enterprise
-# or:
 export GITHUB_COPILOT_ENTERPRISE_DOMAIN=ghe.example.com
 ```
+
+For GitHub.com Enterprise Cloud URLs such as
+`github.com/enterprises/your-enterprise`, do not set an enterprise-domain
+override. Headroom asks GitHub which Copilot API endpoint your account should
+use and will route Business accounts to the advertised endpoint, for example
+`https://api.business.githubcopilot.com`.
 
 GPT-5-family Copilot models use the Responses wire API automatically in subscription mode:
 

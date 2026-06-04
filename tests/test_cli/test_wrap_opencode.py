@@ -331,6 +331,45 @@ def test_opencode_auth_resolver_exchanges_refresh_token(
     assert resolution.source.endswith(":github-copilot:exchange")
 
 
+def test_opencode_auth_resolver_does_not_synthesize_github_cloud_enterprise_host(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(
+        json.dumps(
+            {
+                "github-copilot-enterprise": {
+                    "type": "oauth",
+                    "refresh": "opencode-github-refresh",
+                    "access": "",
+                    "expires": 0,
+                    "enterpriseUrl": "github.com/enterprises/cbcrc",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HEADROOM_OPENCODE_AUTH_FILE", str(auth_file))
+
+    def fake_exchange(refresh_token: str, *, exchange_url: str, timeout: float = 10.0) -> str:
+        assert refresh_token == "opencode-github-refresh"
+        assert exchange_url == "https://api.github.com/copilot_internal/v2/token"
+        assert timeout == 10.0
+        return "opencode-copilot-exchanged"
+
+    monkeypatch.setattr(
+        "headroom.providers.opencode.runtime._exchange_opencode_copilot_token",
+        fake_exchange,
+    )
+
+    resolution = resolve_opencode_copilot_subscription_token_details()
+
+    assert resolution is not None
+    assert resolution.api_url == DEFAULT_API_URL
+    assert resolution.source.endswith(":github-copilot-enterprise:exchange")
+
+
 def test_wrap_opencode_missing_binary_errors_clearly(
     runner: CliRunner,
     tmp_path: Path,

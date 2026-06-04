@@ -472,10 +472,35 @@ def normalize_copilot_enterprise_url(enterprise_url: str) -> str:
     return enterprise_url.strip().replace("https://", "").replace("http://", "").rstrip("/")
 
 
-def copilot_api_url_from_enterprise_url(enterprise_url: str) -> str:
-    """Return opencode's Copilot API base for a GitHub Enterprise URL/domain."""
+def _enterprise_hostname(enterprise_url: str) -> str:
+    normalized = normalize_copilot_enterprise_url(enterprise_url)
+    if not normalized:
+        return ""
+    parsed = urlparse(f"https://{normalized}")
+    return (parsed.hostname or normalized.split("/", 1)[0]).lower()
 
-    return f"https://copilot-api.{normalize_copilot_enterprise_url(enterprise_url)}"
+
+def _copilot_subdomain_enterprise_host(enterprise_url: str) -> str | None:
+    """Return a host that supports api.<host>/copilot-api.<host> URLs.
+
+    GitHub.com Enterprise Cloud URLs such as ``github.com/enterprises/acme``
+    are account identifiers, not API hostnames. GitHub advertises their
+    Copilot API endpoint from ``/copilot_internal/user`` instead.
+    """
+
+    host = _enterprise_hostname(enterprise_url)
+    if not host or host in {"github.com", "www.github.com", "api.github.com"}:
+        return None
+    return host
+
+
+def copilot_api_url_from_enterprise_url(enterprise_url: str) -> str:
+    """Return a Copilot API base for a GitHub Enterprise Server/custom domain."""
+
+    host = _copilot_subdomain_enterprise_host(enterprise_url)
+    if host is None:
+        return DEFAULT_API_URL
+    return f"https://copilot-api.{host}"
 
 
 def _configured_enterprise_domain() -> str | None:
@@ -485,7 +510,7 @@ def _configured_enterprise_domain() -> str | None:
     )
     if not enterprise_url:
         return None
-    return normalize_copilot_enterprise_url(enterprise_url)
+    return _copilot_subdomain_enterprise_host(enterprise_url)
 
 
 def _configured_api_url_override() -> str | None:
@@ -518,6 +543,19 @@ def _api_url_from_payload(payload: dict[str, Any] | None) -> str:
 
 def _api_url_from_user_info(payload: dict[str, Any] | None) -> str:
     return _api_url_from_payload(payload)
+
+
+def _api_url_from_exchange_payload(
+    payload: dict[str, Any] | None,
+    *,
+    oauth_token: str | None = None,
+) -> str:
+    api_url = _api_url_from_payload(payload)
+    if api_url != DEFAULT_API_URL or not oauth_token:
+        return api_url
+
+    user_info = _fetch_copilot_user_info(oauth_token)
+    return _api_url_from_user_info(user_info)
 
 
 def _copilot_chat_header_defaults() -> dict[str, str]:
@@ -648,7 +686,7 @@ def _subscription_resolution_from_token_exchange(
         logger.debug("Copilot token exchange from %s returned no token", candidate.source)
         return None
 
-    api_url = _api_url_from_payload(payload)
+    api_url = _api_url_from_exchange_payload(payload, oauth_token=candidate.token)
     return CopilotSubscriptionTokenResolution(
         token=token,
         source=f"{candidate.source}:token-exchange",
@@ -898,7 +936,11 @@ class CopilotTokenProvider:
             raise RuntimeError("Copilot token exchange returned an empty token.")
 
         expires_at = _parse_expiry(payload.get("expires_at")) or (time.time() + 1800)
-        api_url = _api_url_from_payload(payload)
+        api_url = await asyncio.to_thread(
+            _api_url_from_exchange_payload,
+            payload,
+            oauth_token=oauth_token,
+        )
         refresh_in = payload.get("refresh_in")
         sku = payload.get("sku")
         return CopilotAPIToken(
