@@ -1,0 +1,135 @@
+(.venv) joelbelanger@MTLAFSDHQFR6P6E headroom % python scripts/debug_copilot_subscription.py --model gpt-5.4 --probe-generation
+Headroom Copilot subscription diagnostics
+model=gpt-5.4
+generation_probes=enabled
+tokens:
+  [1] source=env:GITHUB_COPILOT_TOKEN fingerprint=sha256:e836b0c6a969
+base_urls:
+  https://api.githubcopilot.com
+  https://api.business.githubcopilot.com
+
+== token sha256:e836b0c6a969 (env:GITHUB_COPILOT_TOKEN) ==
+user-info: status=200 elapsed_ms=343 url=https://api.github.com/copilot_internal/user
+  headers={"Content-Type": "application/json; charset=utf-8", "X-GitHub-Request-Id": "2957:2F22:A1C49C:25DD7EC:6A219DE5", "X-RateLimit-Limit": "5000", "X-RateLimit-Remaining": "4998", "X-RateLimit-Reset": "1780591557", "X-RateLimit-Resource": "core", "X-RateLimit-Used": "2"}
+  advertised_api_url=https://api.business.githubcopilot.com
+models header_style=minimal: status=200 elapsed_ms=214 url=https://api.githubcopilot.com/models
+  headers={"Content-Type": "application/json", "X-GitHub-Request-Id": "0752:375A38:36112C0:3930DE3:6A219DE5", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "b8df1cb4-4ad6-4d0f-96c5-60995c74b86a"}
+  model_summary={"found": false, "near_matches": [], "total_models": 7}
+generation /responses header_style=minimal: status=400 elapsed_ms=217 url=https://api.githubcopilot.com/responses
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "6638:2766A7:3720BA0:3A39428:6A219DE5", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "cbdbd0e6-4e50-4c2d-a466-e4eedc7d7af5", "x-request-id": "00000-93e00ce0-40e0-4ca0-a7ce-e7489ac475e7"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /v1/responses header_style=minimal: status=400 elapsed_ms=267 url=https://api.githubcopilot.com/v1/responses
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "CF59:3DDA1D:362C090:3948D5D:6A219DE6", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "1f017cf9-c749-4fb2-8f24-12ce4e7515bf", "x-request-id": "00000-0fc64597-80f4-480e-a8bf-b686cef5215c"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /chat/completions header_style=minimal: status=400 elapsed_ms=201 url=https://api.githubcopilot.com/chat/completions
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "FDF0:A81C0:3702FE0:3A1BBDA:6A219DE6", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "9a9c3293-cd49-4e2e-a373-443c2a094c6c", "x-request-id": "00000-22d15334-6bda-42bf-ad92-d5d39939eec2"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /v1/chat/completions header_style=minimal: status=404 elapsed_ms=77 url=https://api.githubcopilot.com/v1/chat/completions
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "1AE4:101C4B:3702613:3A1CF21:6A219DE6"}
+  error=HTTP Error 404: Not Found
+  error_preview=404 page not found
+
+models header_style=opencode: status=200 elapsed_ms=215 url=https://api.githubcopilot.com/models
+  headers={"Content-Type": "application/json", "X-GitHub-Request-Id": "4C04:352990:384689E:3B5AE33:6A219DE6", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "68ff9e4a-bcd7-4817-9269-d5134bc69089"}
+  model_summary={"found": false, "near_matches": [], "total_models": 7}
+generation /responses header_style=opencode: status=400 elapsed_ms=245 url=https://api.githubcopilot.com/responses
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "3EAA:2AF4CD:363F49D:395C5BE:6A219DE6", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "66069940-ec25-432a-9e49-d2a659ea8289", "x-request-id": "00000-987b59c4-70e9-4517-8069-2e6b7ba5d1c7"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /v1/responses header_style=opencode: status=400 elapsed_ms=221 url=https://api.githubcopilot.com/v1/responses
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "5571:35A548:37012DE:3A1A551:6A219DE7", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "2e8e9a09-9c5d-471e-8a6b-b2999196353a", "x-request-id": "00000-1dc36c61-ac1f-49a9-9370-3ac94f737fed"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /chat/completions header_style=opencode: status=400 elapsed_ms=210 url=https://api.githubcopilot.com/chat/completions
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "2BEB:35A548:37014BE:3A1A70E:6A219DE7", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "508fd90a-09ba-47ed-be00-a3ce71b04065", "x-request-id": "00000-5953558a-da18-4973-be4e-7a89736c7379"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /v1/chat/completions header_style=opencode: status=404 elapsed_ms=76 url=https://api.githubcopilot.com/v1/chat/completions
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "D57B:3DDA1D:362CC2D:3949998:6A219DE7"}
+  error=HTTP Error 404: Not Found
+  error_preview=404 page not found
+
+models header_style=copilot-cli: status=200 elapsed_ms=206 url=https://api.githubcopilot.com/models
+  headers={"Content-Type": "application/json", "X-GitHub-Request-Id": "A2FF:206ABF:3816637:3B2ACF7:6A219DE7", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "531d05b6-be1a-407f-920b-b83ba3dd12f2"}
+  model_summary={"found": false, "near_matches": [], "total_models": 7}
+generation /responses header_style=copilot-cli: status=400 elapsed_ms=294 url=https://api.githubcopilot.com/responses
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "1F30:2933D9:381DBF1:3B33799:6A219DE7", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "0b8ca8b2-124c-46f9-ae87-d8563b2063b2", "x-request-id": "00000-4b81f4de-f835-4da2-8c0c-5d7e131c15e3"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /v1/responses header_style=copilot-cli: status=400 elapsed_ms=230 url=https://api.githubcopilot.com/v1/responses
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "963A:19232B:367EE26:399C0F8:6A219DE8", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "924c647f-38fe-48e5-bed3-706581e302c6", "x-request-id": "00000-0b31d2ad-070d-490b-a39a-141c260f258a"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /chat/completions header_style=copilot-cli: status=400 elapsed_ms=235 url=https://api.githubcopilot.com/chat/completions
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "13D3:206ABF:3816DA2:3B2B349:6A219DE8", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "38d7bacf-30ff-403b-a94f-6850c68d164d", "x-request-id": "00000-c7a9bda5-bdfc-455a-90c3-cc2d029fc93f"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /v1/chat/completions header_style=copilot-cli: status=404 elapsed_ms=74 url=https://api.githubcopilot.com/v1/chat/completions
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "E4B3:375A38:3612BED:3932689:6A219DE8"}
+  error=HTTP Error 404: Not Found
+  error_preview=404 page not found
+
+models header_style=minimal: status=200 elapsed_ms=209 url=https://api.business.githubcopilot.com/models
+  headers={"Content-Type": "application/json", "X-GitHub-Request-Id": "3E50:9AEDE:36B21A6:39CEDC8:6A219DE8", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "5026a175-87b1-4c84-8f5b-447708419f38"}
+  model_summary={"found": false, "near_matches": [], "total_models": 7}
+generation /responses header_style=minimal: status=400 elapsed_ms=269 url=https://api.business.githubcopilot.com/responses
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "0E32:3DDA1D:362D903:394A4F8:6A219DE8", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "423a088d-a59f-4a2f-949d-849202155dbe", "x-request-id": "00000-3a14e08a-f4b1-4af6-88e2-e65c7b7297fb"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /v1/responses header_style=minimal: status=400 elapsed_ms=239 url=https://api.business.githubcopilot.com/v1/responses
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "C1C4:25B7D4:38108DB:3B2774C:6A219DE9", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "eab0ee15-f05c-4762-a08d-ee7438a75c04", "x-request-id": "00000-2b99c89f-c231-4520-b7ae-bc653fe9ef9f"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /chat/completions header_style=minimal: status=400 elapsed_ms=237 url=https://api.business.githubcopilot.com/chat/completions
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "D88E:2A4A5F:36DE779:39F9772:6A219DE9", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "de0d53b8-3ba9-4b1c-908a-a6c2c37ce19a", "x-request-id": "00000-36b7d17d-f68b-46f2-b2f4-dd30a45a3ead"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /v1/chat/completions header_style=minimal: status=404 elapsed_ms=120 url=https://api.business.githubcopilot.com/v1/chat/completions
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "C2B1:2933D9:381EDD8:3B3489C:6A219DE9"}
+  error=HTTP Error 404: Not Found
+  error_preview=404 page not found
+
+models header_style=opencode: status=200 elapsed_ms=222 url=https://api.business.githubcopilot.com/models
+  headers={"Content-Type": "application/json", "X-GitHub-Request-Id": "A2CC:206ABF:3817A0F:3B2BEFB:6A219DE9", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "35a0f45b-6438-485d-914e-5042f461d57a"}
+  model_summary={"found": false, "near_matches": [], "total_models": 7}
+generation /responses header_style=opencode: status=400 elapsed_ms=207 url=https://api.business.githubcopilot.com/responses
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "C35D:2785EF:3957AD9:3C67012:6A219DE9", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "0f5bf0be-7f5a-47d0-9e39-85becde901a3", "x-request-id": "00000-8e6b4b4e-011a-4b08-8b4f-695234be0eff"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /v1/responses header_style=opencode: status=400 elapsed_ms=197 url=https://api.business.githubcopilot.com/v1/responses
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "FE3B:3B0476:37A4917:3ABE6F8:6A219DEA", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "39de0376-e969-490a-84e1-d21d5d5618c8", "x-request-id": "00000-c2e36b2d-939e-4a58-a179-86730cbd98dd"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /chat/completions header_style=opencode: status=400 elapsed_ms=226 url=https://api.business.githubcopilot.com/chat/completions
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "97FA:9AEDE:36B3003:39CFC12:6A219DEA", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "3289fa91-fa55-436a-adfd-7eb4d3c517cd", "x-request-id": "00000-7b4586bb-00ff-4ebf-b22c-f9eb149609a6"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /v1/chat/completions header_style=opencode: status=404 elapsed_ms=98 url=https://api.business.githubcopilot.com/v1/chat/completions
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "1EDD:3D97BB:3648668:3967C8E:6A219DEA"}
+  error=HTTP Error 404: Not Found
+  error_preview=404 page not found
+
+models header_style=copilot-cli: status=200 elapsed_ms=231 url=https://api.business.githubcopilot.com/models
+  headers={"Content-Type": "application/json", "X-GitHub-Request-Id": "AF51:20A128:35F800A:39184F2:6A219DEA", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "fbc3f880-21b1-4683-b9f8-0e9a1df98b32"}
+  model_summary={"found": false, "near_matches": [], "total_models": 7}
+generation /responses header_style=copilot-cli: status=400 elapsed_ms=192 url=https://api.business.githubcopilot.com/responses
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "E11F:2785EF:39582E7:3C67908:6A219DEA", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "ea553875-3b25-41c1-b879-bd25dd08fe8d", "x-request-id": "00000-33ae55e4-7a38-4e07-bd4a-d42964c20735"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /v1/responses header_style=copilot-cli: status=400 elapsed_ms=218 url=https://api.business.githubcopilot.com/v1/responses
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "42F5:1D6E5B:380BCEB:3B1E97C:6A219DEB", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "4390a3db-9faf-42a1-9842-35306dae1a63", "x-request-id": "00000-70da1015-a099-4cc0-ba12-a5583fb605fd"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /chat/completions header_style=copilot-cli: status=400 elapsed_ms=213 url=https://api.business.githubcopilot.com/chat/completions
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "50BF:9AEDE:36B37E5:39D0489:6A219DEB", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "8cc4b98a-cea8-4ae0-8954-7523f01ad61b", "x-request-id": "00000-6087fdad-8de4-4b7f-affc-e23f47eb7805"}
+  error=HTTP Error 400: Bad Request
+  error_preview={"error": {"message": "The requested model is not supported.", "code": "model_not_supported", "param": "model", "type": "invalid_request_error"}}
+generation /v1/chat/completions header_style=copilot-cli: status=404 elapsed_ms=180 url=https://api.business.githubcopilot.com/v1/chat/completions
+  headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "75EA:2766A7:3723D16:3A3C586:6A219DEB"}
+  error=HTTP Error 404: Not Found
+  error_preview=404 page not found
+
+  gho_FF6awIHNTi0ngpqBTYMjOapQyKqjZn29Y
