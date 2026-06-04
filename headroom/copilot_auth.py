@@ -541,6 +541,31 @@ def _set_header_default(headers: dict[str, str], name: str, value: str) -> None:
     headers[name] = value
 
 
+def _subscription_resolution_from_model_catalog(
+    *,
+    token: str,
+    source: str,
+    confidence: str,
+) -> CopilotSubscriptionTokenResolution | None:
+    api_url = _configured_api_url()
+    try:
+        fetch_copilot_model_catalog(token, api_url=api_url, timeout=5.0)
+    except Exception as exc:
+        logger.debug(
+            "Unable to validate Copilot subscription token from %s via model catalog: %s",
+            source,
+            exc,
+        )
+        return None
+    return CopilotSubscriptionTokenResolution(
+        token=token,
+        source=source,
+        confidence=confidence,
+        api_url=api_url,
+        token_fingerprint=token_fingerprint(token),
+    )
+
+
 def resolve_subscription_bearer_token_details() -> CopilotSubscriptionTokenResolution | None:
     """Return the first Copilot subscription token plus safe diagnostic metadata."""
 
@@ -556,6 +581,13 @@ def resolve_subscription_bearer_token_details() -> CopilotSubscriptionTokenResol
                 confidence="explicit-api-token",
                 payload=payload,
             )
+        fallback = _subscription_resolution_from_model_catalog(
+            token=token,
+            source=f"env:{env_var}",
+            confidence="explicit-api-token",
+        )
+        if fallback is not None:
+            return fallback
 
     for candidate in iter_oauth_token_candidates():
         if not candidate.validate_for_subscription:
@@ -573,6 +605,18 @@ def resolve_subscription_bearer_token_details() -> CopilotSubscriptionTokenResol
                 confidence=candidate.confidence,
                 payload=payload,
             )
+        fallback = _subscription_resolution_from_model_catalog(
+            token=candidate.token,
+            source=candidate.source,
+            confidence=candidate.confidence,
+        )
+        if fallback is not None:
+            logger.debug(
+                "Using Copilot subscription token from %s (%s) after model catalog validation",
+                candidate.source,
+                candidate.confidence,
+            )
+            return fallback
 
     return None
 
