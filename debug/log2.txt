@@ -1,3 +1,6 @@
+(.venv) joelbelanger@MTLAFSDHQFR6P6E headroom % headroom wrap copilot --subscription --debug-copilot -- --model gpt-5.4
+  Setting up rtk for Copilot...
+Error: GitHub Copilot subscription model 'gpt-5.4' is not available for this account at https://api.business.githubcopilot.com. Available models: gpt-4o-mini-2024-07-18, gpt-4o-2024-11-20, gpt-4o-2024-08-06, gpt-41-copilot, gpt-3.5-turbo-0613, gpt-3.5-turbo, gpt-4o-mini, gpt-4o. Choose one of those models or check the organization's Copilot model policy.
 (.venv) joelbelanger@MTLAFSDHQFR6P6E headroom % python scripts/debug_copilot_subscription.py --model gpt5.4 --header-style opencode
 Headroom Copilot subscription diagnostics
 model=gpt5.4
@@ -5,27 +8,68 @@ generation_probes=skipped
 tokens:
   [1] source=env:GITHUB_COPILOT_TOKEN fingerprint=sha256:e836b0c6a969
 base_urls:
-  https://copilot-api.github.com/enterprises/cbcrc
   https://api.githubcopilot.com
   https://api.business.githubcopilot.com
 
 == token sha256:e836b0c6a969 (env:GITHUB_COPILOT_TOKEN) ==
-user-info: status=200 elapsed_ms=278 url=https://api.github.com/copilot_internal/user
-  headers={"Content-Type": "application/json; charset=utf-8", "X-GitHub-Request-Id": "A829:38B29F:31EAFE:BB97DD:6A21BEF0", "X-RateLimit-Limit": "5000", "X-RateLimit-Remaining": "4975", "X-RateLimit-Reset": "1780596773", "X-RateLimit-Resource": "core", "X-RateLimit-Used": "25"}
+user-info: status=200 elapsed_ms=309 url=https://api.github.com/copilot_internal/user
+  headers={"Content-Type": "application/json; charset=utf-8", "X-GitHub-Request-Id": "7055:C4ACC:120F8E8:43D0A12:6A21C7EA", "X-RateLimit-Limit": "5000", "X-RateLimit-Remaining": "4980", "X-RateLimit-Reset": "1780600403", "X-RateLimit-Resource": "core", "X-RateLimit-Used": "20"}
   advertised_api_url=https://api.business.githubcopilot.com
-token-exchange: status=404 elapsed_ms=69 url=https://api.github.com/enterprises/cbcrc/copilot_internal/v2/token
-  headers={"Content-Type": "application/json; charset=utf-8", "X-GitHub-Request-Id": "FD40:1CD5C7:CEF05E:307E170:6A21BEF1"}
+token-exchange: status=404 elapsed_ms=133 url=https://api.github.com/copilot_internal/v2/token
+  headers={"Content-Type": "application/json; charset=utf-8", "X-GitHub-Request-Id": "A505:1BCE91:11A5151:41E916A:6A21C7EB", "X-RateLimit-Limit": "5000", "X-RateLimit-Remaining": "4979", "X-RateLimit-Reset": "1780600403", "X-RateLimit-Resource": "core", "X-RateLimit-Used": "21"}
   error=HTTP Error 404: Not Found
   error_preview={"message": "Not Found", "documentation_url": "https://docs.github.com/rest", "status": "404"}
-models header_style=opencode: status=error elapsed_ms=1 url=https://copilot-api.github.com/enterprises/cbcrc/models
-  error=URLError: <urlopen error [Errno 8] nodename nor servname provided, or not known>
-models header_style=opencode: status=200 elapsed_ms=201 url=https://api.githubcopilot.com/models
-  headers={"Content-Type": "application/json", "X-GitHub-Request-Id": "EBF2:E7E3:37FEE1:3C4053:6A21BEF1", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "a4036c0e-7285-40c6-b2e3-1e00b420bfcb"}
+models header_style=opencode: status=200 elapsed_ms=234 url=https://api.githubcopilot.com/models
+  headers={"Content-Type": "application/json", "X-GitHub-Request-Id": "814E:2B24BD:7515EC:7DA3F9:6A21C7EB", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "c1e21f9e-c52b-4c83-8d5c-712f7d7d9d77"}
   model_summary={"found": false, "near_matches": [], "total_models": 7}
   model_catalog={"models": [{"id": "gpt-4o-mini-2024-07-18", "model_picker_enabled": false, "name": "GPT-4o mini", "policy_state": null, "supported_endpoints": null}, {"id": "gpt-4o-2024-11-20", "model_picker_enabled": false, "name": "GPT-4o", "policy_state": null, "supported_endpoints": null}, {"id": "gpt-4o-2024-08-06", "model_picker_enabled": false, "name": "GPT-4o", "policy_state": null, "supported_endpoints": null}, {"id": "gpt-3.5-turbo-0613", "model_picker_enabled": false, "name": "GPT 3.5 Turbo", "policy_state": null, "supported_endpoints": null}, {"id": "gpt-3.5-turbo", "model_picker_enabled": false, "name": "GPT 3.5 Turbo", "policy_state": null, "supported_endpoints": null}, {"id": "gpt-4o-mini", "model_picker_enabled": false, "name": "GPT-4o mini", "policy_state": null, "supported_endpoints": null}, {"id": "gpt-4o", "model_picker_enabled": false, "name": "GPT-4o", "policy_state": null, "supported_endpoints": null}], "shown": 7, "total_models": 7, "truncated": false}
-models header_style=opencode: status=200 elapsed_ms=275 url=https://api.business.githubcopilot.com/models
-  headers={"Content-Type": "application/json", "X-GitHub-Request-Id": "59F4:13237B:37FE55:3C340E:6A21BEF1", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "1d6f539d-0830-47a2-b7c8-c9f482af9bcb"}
+models header_style=opencode: status=200 elapsed_ms=220 url=https://api.business.githubcopilot.com/models
+  headers={"Content-Type": "application/json", "X-GitHub-Request-Id": "431E:B232E:7725AB:7F8B74:6A21C7EB", "x-copilot-api-exp-assignment-context": "e4hcf520:1109203;t_33b5c122:1165002;", "x-copilot-service-request-id": "06db3377-e625-47e6-aba0-1d614667e80a"}
   model_summary={"found": false, "near_matches": [], "total_models": 7}
   model_catalog={"models": [{"id": "gpt-4o-mini-2024-07-18", "model_picker_enabled": false, "name": "GPT-4o mini", "policy_state": null, "supported_endpoints": null}, {"id": "gpt-4o-2024-11-20", "model_picker_enabled": false, "name": "GPT-4o", "policy_state": null, "supported_endpoints": null}, {"id": "gpt-4o-2024-08-06", "model_picker_enabled": false, "name": "GPT-4o", "policy_state": null, "supported_endpoints": null}, {"id": "gpt-3.5-turbo-0613", "model_picker_enabled": false, "name": "GPT 3.5 Turbo", "policy_state": null, "supported_endpoints": null}, {"id": "gpt-3.5-turbo", "model_picker_enabled": false, "name": "GPT 3.5 Turbo", "policy_state": null, "supported_endpoints": null}, {"id": "gpt-4o-mini", "model_picker_enabled": false, "name": "GPT-4o mini", "policy_state": null, "supported_endpoints": null}, {"id": "gpt-4o", "model_picker_enabled": false, "name": "GPT-4o", "policy_state": null, "supported_endpoints": null}], "shown": 7, "total_models": 7, "truncated": false}
 
 Generation probes were skipped. Add --probe-generation to POST tiny requests.
+(.venv) joelbelanger@MTLAFSDHQFR6P6E headroom % headroom wrap copilot --subscription --debug-copilot -- --model gpt-5.4
+  Setting up rtk for Copilot...
+Error: GitHub Copilot subscription model 'gpt-5.4' is not available for this account at https://api.business.githubcopilot.com. Available models: gpt-4o-mini-2024-07-18, gpt-4o-2024-11-20, gpt-4o-2024-08-06, gpt-41-copilot, gpt-3.5-turbo-0613, gpt-3.5-turbo, gpt-4o-mini, gpt-4o. Choose one of those models or check the organization's Copilot model policy.
+(.venv) joelbelanger@MTLAFSDHQFR6P6E headroom % `python scripts/debug_copilot_subscription.py --model gpt-5.4`
+Usage: Headroom [OPTIONS] COMMAND [ARGS]...
+Try 'Headroom --help' for help.
+
+Error: No such command 'Copilot'.
+(.venv) joelbelanger@MTLAFSDHQFR6P6E headroom % 
+
+
+in my zshrc:
+
+export GITHUB_COPILOT_ENTERPRISE_URL=https://github.com/enterprises/cbcrc
+# Headroom Wrapped Copilot Subscription CLI (Silent Multi-Env Mode)
+copilot-h() {
+    local target_model="gpt-4o"
+    local next_is_model=false
+
+    # Parse arguments to see what model is being requested
+    for arg in "$@"; do
+        if [[ "$next_is_model" == true ]]; then
+            target_model="$arg"
+            next_is_model=false
+        elif [[ "$arg" == "--model" ]]; then
+            next_is_model=true
+        fi
+    done
+
+    # Base environment variables
+    export GITHUB_COPILOT_ENTERPRISE_URL=https://github.com/enterprises/cbcrc
+    #export GITHUB_COPILOT_TOKEN=$(security find-generic-password -s copilot-cli -w 2>/dev/null)
+    export UV_SKIP_WHEEL_FILENAME_CHECK=1
+    export COPILOT_MODEL="$target_model"
+
+    # Route conditionally, masking VIRTUAL_ENV inline to suppress cross-env warnings
+    if [[ "$target_model" == *"gpt-5"* ]]; then
+        VIRTUAL_ENV="" uv run --project "$HOME/Dev/headroom" --extra all --with fastapi --with uvicorn -- \
+            headroom wrap copilot --subscription --provider-type openai --wire-api responses -- "$@"
+    else
+        VIRTUAL_ENV="" uv run --project "$HOME/Dev/headroom" --extra all --with fastapi --with uvicorn -- \
+            headroom wrap copilot --subscription -- "$@"
+    fi
+}
