@@ -29,8 +29,10 @@ DEFAULT_TOKEN_EXCHANGE_URL = "https://api.github.com/copilot_internal/v2/token"
 DEFAULT_USER_INFO_URL = "https://api.github.com/copilot_internal/user"
 DEFAULT_GITHUB_HOST = "github.com"
 _TOKEN_EXPIRY_BUFFER_S = 60
-_DEFAULT_EDITOR_VERSION = "vscode/1.104.1"
-_DEFAULT_USER_AGENT = "GitHubCopilotChat/0.1"
+_DEFAULT_EDITOR_VERSION = "vscode/1.107.0"
+_DEFAULT_USER_AGENT = "GitHubCopilotChat/0.35.0"
+_DEFAULT_EDITOR_PLUGIN_VERSION = "copilot-chat/0.35.0"
+_DEFAULT_COPILOT_INTEGRATION_ID = "vscode-chat"
 _DEFAULT_GITHUB_API_VERSION = "2026-06-01"
 
 _API_TOKEN_ENV_VARS = (
@@ -115,7 +117,15 @@ def _github_host() -> str:
 
 
 def _token_exchange_url() -> str:
-    return os.environ.get("GITHUB_COPILOT_TOKEN_EXCHANGE_URL", DEFAULT_TOKEN_EXCHANGE_URL).strip()
+    override = os.environ.get("GITHUB_COPILOT_TOKEN_EXCHANGE_URL", "").strip()
+    if override:
+        return override
+
+    enterprise_domain = _configured_enterprise_domain()
+    if enterprise_domain:
+        return f"https://api.{enterprise_domain}/copilot_internal/v2/token"
+
+    return DEFAULT_TOKEN_EXCHANGE_URL
 
 
 def _user_info_url() -> str:
@@ -468,17 +478,24 @@ def copilot_api_url_from_enterprise_url(enterprise_url: str) -> str:
     return f"https://copilot-api.{normalize_copilot_enterprise_url(enterprise_url)}"
 
 
+def _configured_enterprise_domain() -> str | None:
+    enterprise_url = (
+        os.environ.get("GITHUB_COPILOT_ENTERPRISE_URL", "").strip()
+        or os.environ.get("GITHUB_COPILOT_ENTERPRISE_DOMAIN", "").strip()
+    )
+    if not enterprise_url:
+        return None
+    return normalize_copilot_enterprise_url(enterprise_url)
+
+
 def _configured_api_url_override() -> str | None:
     api_url = os.environ.get("GITHUB_COPILOT_API_URL", "").strip()
     if api_url:
         return api_url.rstrip("/")
 
-    enterprise_url = (
-        os.environ.get("GITHUB_COPILOT_ENTERPRISE_URL", "").strip()
-        or os.environ.get("GITHUB_COPILOT_ENTERPRISE_DOMAIN", "").strip()
-    )
-    if enterprise_url:
-        return copilot_api_url_from_enterprise_url(enterprise_url).rstrip("/")
+    enterprise_domain = _configured_enterprise_domain()
+    if enterprise_domain:
+        return copilot_api_url_from_enterprise_url(enterprise_domain).rstrip("/")
 
     return None
 
@@ -487,7 +504,7 @@ def _configured_api_url() -> str:
     return _configured_api_url_override() or DEFAULT_API_URL
 
 
-def _api_url_from_user_info(payload: dict[str, Any] | None) -> str:
+def _api_url_from_payload(payload: dict[str, Any] | None) -> str:
     override = _configured_api_url_override()
     if override:
         return override
@@ -497,6 +514,48 @@ def _api_url_from_user_info(payload: dict[str, Any] | None) -> str:
     if isinstance(api_url, str) and api_url.strip():
         return api_url.strip()
     return DEFAULT_API_URL
+
+
+def _api_url_from_user_info(payload: dict[str, Any] | None) -> str:
+    return _api_url_from_payload(payload)
+
+
+def _copilot_chat_header_defaults() -> dict[str, str]:
+    return {
+        "User-Agent": os.environ.get("GITHUB_COPILOT_USER_AGENT", _DEFAULT_USER_AGENT).strip()
+        or _DEFAULT_USER_AGENT,
+        "Editor-Version": os.environ.get(
+            "GITHUB_COPILOT_EDITOR_VERSION", _DEFAULT_EDITOR_VERSION
+        ).strip()
+        or _DEFAULT_EDITOR_VERSION,
+        "Editor-Plugin-Version": os.environ.get(
+            "GITHUB_COPILOT_EDITOR_PLUGIN_VERSION",
+            _DEFAULT_EDITOR_PLUGIN_VERSION,
+        ).strip()
+        or _DEFAULT_EDITOR_PLUGIN_VERSION,
+        "Copilot-Integration-Id": os.environ.get(
+            "GITHUB_COPILOT_INTEGRATION_ID",
+            _DEFAULT_COPILOT_INTEGRATION_ID,
+        ).strip()
+        or _DEFAULT_COPILOT_INTEGRATION_ID,
+    }
+
+
+def _copilot_token_exchange_headers(oauth_token: str) -> dict[str, str]:
+    return {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {oauth_token}",
+        **_copilot_chat_header_defaults(),
+    }
+
+
+def _copilot_api_request_headers(token: str) -> dict[str, str]:
+    return {
+        **_copilot_token_exchange_headers(token),
+        "X-GitHub-Api-Version": _DEFAULT_GITHUB_API_VERSION,
+        "Openai-Intent": "conversation-edits",
+        "X-Initiator": "user",
+    }
 
 
 def _subscription_resolution(
@@ -566,6 +625,39 @@ def _subscription_resolution_from_model_catalog(
     )
 
 
+def _subscription_resolution_from_token_exchange(
+    candidate: CopilotTokenCandidate,
+) -> CopilotSubscriptionTokenResolution | None:
+    """Exchange a reusable GitHub OAuth token for a Copilot API token."""
+
+    try:
+        payload = CopilotTokenProvider._exchange_token_sync(
+            _copilot_token_exchange_headers(candidate.token)
+        )
+    except Exception as exc:
+        logger.debug(
+            "Unable to exchange Copilot OAuth token from %s via %s: %s",
+            candidate.source,
+            _token_exchange_url(),
+            exc,
+        )
+        return None
+
+    token = str(payload.get("token") or "").strip()
+    if not token:
+        logger.debug("Copilot token exchange from %s returned no token", candidate.source)
+        return None
+
+    api_url = _api_url_from_payload(payload)
+    return CopilotSubscriptionTokenResolution(
+        token=token,
+        source=f"{candidate.source}:token-exchange",
+        confidence="copilot-chat-token-exchange",
+        api_url=api_url,
+        token_fingerprint=token_fingerprint(token),
+    )
+
+
 def resolve_subscription_bearer_token_details() -> CopilotSubscriptionTokenResolution | None:
     """Return the first Copilot subscription token plus safe diagnostic metadata."""
 
@@ -592,6 +684,15 @@ def resolve_subscription_bearer_token_details() -> CopilotSubscriptionTokenResol
     for candidate in iter_oauth_token_candidates():
         if not candidate.validate_for_subscription:
             continue
+        exchanged = _subscription_resolution_from_token_exchange(candidate)
+        if exchanged is not None:
+            logger.debug(
+                "Using exchanged Copilot subscription token from %s (%s)",
+                candidate.source,
+                candidate.confidence,
+            )
+            return exchanged
+
         payload = _fetch_copilot_user_info(candidate.token)
         if payload is not None:
             logger.debug(
@@ -669,12 +770,7 @@ def fetch_copilot_model_catalog(
 
     request = urllib_request.Request(
         build_copilot_upstream_url(api_url, "/models"),
-        headers={
-            "Accept": "application/json",
-            "Authorization": f"Bearer {token}",
-            "User-Agent": _DEFAULT_USER_AGENT,
-            "X-GitHub-Api-Version": _DEFAULT_GITHUB_API_VERSION,
-        },
+        headers=_copilot_api_request_headers(token),
         method="GET",
     )
     with urllib_request.urlopen(request, timeout=timeout) as response:
@@ -705,10 +801,7 @@ def _fetch_copilot_user_info(token: str) -> dict[str, Any] | None:
     if not token:
         return None
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-    }
+    headers = _copilot_token_exchange_headers(token)
     request = urllib_request.Request(_user_info_url(), headers=headers, method="GET")
     try:
         with urllib_request.urlopen(request, timeout=10.0) as response:
@@ -798,27 +891,14 @@ class CopilotTokenProvider:
             return exchanged
 
     async def _exchange_token(self, oauth_token: str) -> CopilotAPIToken:
-        headers = {
-            "Authorization": f"Bearer {oauth_token}",
-            "Accept": "application/json",
-            "Editor-Version": os.environ.get(
-                "GITHUB_COPILOT_EDITOR_VERSION", _DEFAULT_EDITOR_VERSION
-            ),
-            "User-Agent": _DEFAULT_USER_AGENT,
-        }
+        headers = _copilot_token_exchange_headers(oauth_token)
         payload = await asyncio.to_thread(self._exchange_token_sync, headers)
         token = str(payload.get("token") or "").strip()
         if not token:
             raise RuntimeError("Copilot token exchange returned an empty token.")
 
         expires_at = _parse_expiry(payload.get("expires_at")) or (time.time() + 1800)
-        raw_endpoints = payload.get("endpoints")
-        endpoints: dict[str, Any] = raw_endpoints if isinstance(raw_endpoints, dict) else {}
-        api_url = (
-            _configured_api_url_override()
-            or str(endpoints.get("api") or DEFAULT_API_URL).strip()
-            or DEFAULT_API_URL
-        )
+        api_url = _api_url_from_payload(payload)
         refresh_in = payload.get("refresh_in")
         sku = payload.get("sku")
         return CopilotAPIToken(
@@ -867,8 +947,9 @@ async def apply_copilot_api_auth(headers: dict[str, str], *, url: str) -> dict[s
         if key.lower() in {"authorization", "x-api-key"}:
             resolved.pop(key)
     resolved["Authorization"] = f"Bearer {token.token}"
-    _set_header_default(resolved, "User-Agent", _DEFAULT_USER_AGENT)
+    for name, value in _copilot_chat_header_defaults().items():
+        _set_header_default(resolved, name, value)
     _set_header_default(resolved, "X-GitHub-Api-Version", _DEFAULT_GITHUB_API_VERSION)
     _set_header_default(resolved, "Openai-Intent", "conversation-edits")
-    _set_header_default(resolved, "x-initiator", "user")
+    _set_header_default(resolved, "X-Initiator", "user")
     return resolved

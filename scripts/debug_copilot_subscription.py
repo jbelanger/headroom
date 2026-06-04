@@ -7,6 +7,7 @@ This script is intentionally standalone and secret-safe:
 * By default it reads only environment variables and opencode's auth.json.
 * It does not touch Keychain, Secret Service, Credential Manager, or gh unless
   --allow-secret-store is passed.
+* It probes the Copilot Chat token exchange before trying model calls.
 * Generation probes are opt-in with --probe-generation.
 """
 
@@ -27,10 +28,13 @@ from typing import Any
 
 DEFAULT_API_URL = "https://api.githubcopilot.com"
 DEFAULT_BUSINESS_API_URL = "https://api.business.githubcopilot.com"
+DEFAULT_TOKEN_EXCHANGE_URL = "https://api.github.com/copilot_internal/v2/token"
 DEFAULT_USER_INFO_URL = "https://api.github.com/copilot_internal/user"
 DEFAULT_OPENCODE_USER_AGENT = "opencode/1.15.11"
-DEFAULT_COPILOT_USER_AGENT = "GitHubCopilotChat/0.1"
-DEFAULT_EDITOR_VERSION = "vscode/1.104.1"
+DEFAULT_COPILOT_USER_AGENT = "GitHubCopilotChat/0.35.0"
+DEFAULT_EDITOR_VERSION = "vscode/1.107.0"
+DEFAULT_EDITOR_PLUGIN_VERSION = "copilot-chat/0.35.0"
+DEFAULT_COPILOT_INTEGRATION_ID = "vscode-chat"
 
 API_TOKEN_ENV_VARS = (
     "GITHUB_COPILOT_API_TOKEN",
@@ -248,23 +252,26 @@ def read_opencode_auth_candidates() -> list[TokenCandidate]:
             print(f"warn: could not read opencode auth file {path}: {exc}", file=sys.stderr)
             continue
 
-        entry = payload.get("github-copilot") if isinstance(payload, dict) else None
-        if not isinstance(entry, dict):
+        if not isinstance(payload, dict):
             continue
-        if entry.get("type") != "oauth":
-            continue
+        for provider_id in ("github-copilot-enterprise", "github-copilot"):
+            entry = payload.get(provider_id)
+            if not isinstance(entry, dict):
+                entry = payload.get(f"{provider_id}/")
+            if not isinstance(entry, dict) or entry.get("type") != "oauth":
+                continue
 
-        token = str(entry.get("refresh") or entry.get("access") or "").strip()
-        if not token:
-            continue
-        enterprise_url = str(entry.get("enterpriseUrl") or "").strip() or None
-        candidates.append(
-            TokenCandidate(
-                token=token,
-                source=f"opencode:{path}:github-copilot",
-                enterprise_url=enterprise_url,
+            token = str(entry.get("refresh") or entry.get("access") or "").strip()
+            if not token:
+                continue
+            enterprise_url = str(entry.get("enterpriseUrl") or "").strip() or None
+            candidates.append(
+                TokenCandidate(
+                    token=token,
+                    source=f"opencode:{path}:{provider_id}",
+                    enterprise_url=enterprise_url,
+                )
             )
-        )
     return candidates
 
 
@@ -309,18 +316,38 @@ def opencode_copilot_base(enterprise_url: str | None) -> str:
     return f"https://copilot-api.{normalized}"
 
 
+def copilot_token_exchange_url(enterprise_url: str | None) -> str:
+    override = os.environ.get("GITHUB_COPILOT_TOKEN_EXCHANGE_URL", "").strip()
+    if override:
+        return override
+    domain = (
+        enterprise_url
+        or os.environ.get("GITHUB_COPILOT_ENTERPRISE_URL", "").strip()
+        or os.environ.get("GITHUB_COPILOT_ENTERPRISE_DOMAIN", "").strip()
+        or "github.com"
+    )
+    normalized = domain.strip().replace("https://", "").replace("http://", "").rstrip("/")
+    return f"https://api.{normalized}/copilot_internal/v2/token"
+
+
 def auth_headers(candidate: TokenCandidate, *, style: str, opencode_user_agent: str) -> dict[str, str]:
+    _ = opencode_user_agent  # Kept for backward-compatible CLI output/options.
     headers = {
         "Accept": "application/json",
         "Authorization": f"Bearer {candidate.token}",
     }
-    if style == "opencode":
-        headers["User-Agent"] = opencode_user_agent
+    if style in {"opencode", "copilot-chat"}:
+        headers["User-Agent"] = DEFAULT_COPILOT_USER_AGENT
+        headers["Editor-Version"] = DEFAULT_EDITOR_VERSION
+        headers["Editor-Plugin-Version"] = DEFAULT_EDITOR_PLUGIN_VERSION
+        headers["Copilot-Integration-Id"] = DEFAULT_COPILOT_INTEGRATION_ID
         headers["Openai-Intent"] = "conversation-edits"
-        headers["x-initiator"] = "user"
+        headers["X-Initiator"] = "user"
     elif style == "copilot-cli":
         headers["User-Agent"] = DEFAULT_COPILOT_USER_AGENT
         headers["Editor-Version"] = DEFAULT_EDITOR_VERSION
+        headers["Editor-Plugin-Version"] = DEFAULT_EDITOR_PLUGIN_VERSION
+        headers["Copilot-Integration-Id"] = DEFAULT_COPILOT_INTEGRATION_ID
     return headers
 
 
@@ -460,14 +487,14 @@ def run() -> int:
     )
     parser.add_argument(
         "--header-style",
-        choices=("all", "minimal", "opencode", "copilot-cli"),
+        choices=("all", "minimal", "copilot-chat", "opencode", "copilot-cli"),
         default="all",
         help="Header style to try for /models and optional generation probes.",
     )
     parser.add_argument(
         "--opencode-user-agent",
         default=os.environ.get("OPENCODE_USER_AGENT", DEFAULT_OPENCODE_USER_AGENT),
-        help="User-Agent used for opencode-style probes.",
+        help="Legacy option retained for old invocations; Copilot Chat probes ignore it.",
     )
     parser.add_argument(
         "--timeout",
@@ -502,8 +529,11 @@ def run() -> int:
         return 2
 
     header_styles = (
-        ["minimal", "opencode", "copilot-cli"] if args.header_style == "all" else [args.header_style]
+        ["minimal", "copilot-chat", "copilot-cli"]
+        if args.header_style == "all"
+        else [args.header_style]
     )
+    redaction_tokens = list(candidates)
 
     base_candidates = [
         *args.base_url,
@@ -564,7 +594,7 @@ def run() -> int:
                 opencode_user_agent=args.opencode_user_agent,
             ),
             timeout=args.timeout,
-            tokens=candidates,
+            tokens=redaction_tokens,
         )
         advertised = user_info_api_url(user_info.json_body)
         if advertised:
@@ -585,74 +615,136 @@ def run() -> int:
             if advertised:
                 print(f"  advertised_api_url={advertised}")
 
-        for base_url in dedupe_ordered([*bases, *advertised_api_urls]):
-            for style in header_styles:
-                models_url = endpoint_url(base_url, "/models")
-                models = http_request(
-                    "GET",
-                    models_url,
-                    headers=auth_headers(
-                        candidate,
-                        style=style,
-                        opencode_user_agent=args.opencode_user_agent,
-                    ),
-                    timeout=args.timeout,
-                    tokens=candidates,
-                )
-                summary = model_summary(models.json_body, args.model)
-                catalog = model_catalog_summary(models.json_body)
-                report["probes"].append(
-                    {
-                        "kind": "models",
-                        "token": candidate.fingerprint,
-                        "base_url": base_url,
-                        "header_style": style,
-                        "status": models.status,
-                        "ok": models.ok,
-                        "model": summary,
-                        "catalog": catalog,
-                        "headers": models.headers,
-                        "error_preview": None if models.ok else models.text,
-                    }
-                )
-                if not args.json:
-                    print_http_result(f"models header_style={style}", models)
-                    if summary is not None:
-                        print(f"  model_summary={json.dumps(summary, sort_keys=True)}")
-                    if catalog is not None:
-                        print(f"  model_catalog={json.dumps(catalog, sort_keys=True)}")
+        probe_candidates = [candidate]
+        token_exchange = http_request(
+            "GET",
+            copilot_token_exchange_url(candidate.enterprise_url),
+            headers=auth_headers(
+                candidate,
+                style="copilot-cli",
+                opencode_user_agent=args.opencode_user_agent,
+            ),
+            timeout=args.timeout,
+            tokens=redaction_tokens,
+        )
+        exchange_payload = token_exchange.json_body if isinstance(token_exchange.json_body, dict) else {}
+        exchanged_token = str(exchange_payload.get("token") or "").strip()
+        exchanged_fingerprint = token_fingerprint(exchanged_token) if exchanged_token else None
+        exchange_api = user_info_api_url(exchange_payload)
+        if exchange_api:
+            advertised_api_urls.append(exchange_api)
+        report["probes"].append(
+            {
+                "kind": "token_exchange",
+                "token": candidate.fingerprint,
+                "status": token_exchange.status,
+                "ok": token_exchange.ok,
+                "exchanged_fingerprint": exchanged_fingerprint,
+                "advertised_api_url": exchange_api,
+                "headers": token_exchange.headers,
+                "error_preview": None if token_exchange.ok else token_exchange.text,
+            }
+        )
+        if not args.json:
+            print_http_result("token-exchange", token_exchange)
+            if exchanged_fingerprint:
+                print(f"  exchanged_fingerprint={exchanged_fingerprint}")
+            if exchange_api:
+                print(f"  exchanged_api_url={exchange_api}")
+        if exchanged_token:
+            enterprise_url = (
+                candidate.enterprise_url
+                or os.environ.get("GITHUB_COPILOT_ENTERPRISE_URL", "").strip()
+                or os.environ.get("GITHUB_COPILOT_ENTERPRISE_DOMAIN", "").strip()
+                or None
+            )
+            exchanged_candidate = TokenCandidate(
+                token=exchanged_token,
+                source=f"{candidate.source}:token-exchange",
+                enterprise_url=enterprise_url,
+            )
+            redaction_tokens.append(exchanged_candidate)
+            probe_candidates.append(exchanged_candidate)
 
-                if not args.probe_generation:
-                    continue
-
-                for path in ("/responses", "/v1/responses", "/chat/completions", "/v1/chat/completions"):
-                    result = http_request(
-                        "POST",
-                        endpoint_url(base_url, path),
+        for probe_candidate in probe_candidates:
+            if not args.json and probe_candidate is not candidate:
+                print(
+                    f"\n-- exchanged token {probe_candidate.fingerprint} "
+                    f"({probe_candidate.source}) --"
+                )
+            for base_url in dedupe_ordered([*bases, *advertised_api_urls]):
+                for style in header_styles:
+                    models_url = endpoint_url(base_url, "/models")
+                    models = http_request(
+                        "GET",
+                        models_url,
                         headers=auth_headers(
-                            candidate,
+                            probe_candidate,
                             style=style,
                             opencode_user_agent=args.opencode_user_agent,
                         ),
-                        body=generation_body(path, args.model),
                         timeout=args.timeout,
-                        tokens=candidates,
+                        tokens=redaction_tokens,
                     )
+                    summary = model_summary(models.json_body, args.model)
+                    catalog = model_catalog_summary(models.json_body)
                     report["probes"].append(
                         {
-                            "kind": "generation",
-                            "token": candidate.fingerprint,
+                            "kind": "models",
+                            "token": probe_candidate.fingerprint,
                             "base_url": base_url,
                             "header_style": style,
-                            "path": path,
-                            "status": result.status,
-                            "ok": result.ok,
-                            "headers": result.headers,
-                            "error_preview": None if result.ok else result.text,
+                            "status": models.status,
+                            "ok": models.ok,
+                            "model": summary,
+                            "catalog": catalog,
+                            "headers": models.headers,
+                            "error_preview": None if models.ok else models.text,
                         }
                     )
                     if not args.json:
-                        print_http_result(f"generation {path} header_style={style}", result)
+                        print_http_result(f"models header_style={style}", models)
+                        if summary is not None:
+                            print(f"  model_summary={json.dumps(summary, sort_keys=True)}")
+                        if catalog is not None:
+                            print(f"  model_catalog={json.dumps(catalog, sort_keys=True)}")
+
+                    if not args.probe_generation:
+                        continue
+
+                    for path in (
+                        "/responses",
+                        "/v1/responses",
+                        "/chat/completions",
+                        "/v1/chat/completions",
+                    ):
+                        result = http_request(
+                            "POST",
+                            endpoint_url(base_url, path),
+                            headers=auth_headers(
+                                probe_candidate,
+                                style=style,
+                                opencode_user_agent=args.opencode_user_agent,
+                            ),
+                            body=generation_body(path, args.model),
+                            timeout=args.timeout,
+                            tokens=redaction_tokens,
+                        )
+                        report["probes"].append(
+                            {
+                                "kind": "generation",
+                                "token": probe_candidate.fingerprint,
+                                "base_url": base_url,
+                                "header_style": style,
+                                "path": path,
+                                "status": result.status,
+                                "ok": result.ok,
+                                "headers": result.headers,
+                                "error_preview": None if result.ok else result.text,
+                            }
+                        )
+                        if not args.json:
+                            print_http_result(f"generation {path} header_style={style}", result)
 
     if args.json:
         print(json.dumps(redact_json(report), indent=2, sort_keys=True))

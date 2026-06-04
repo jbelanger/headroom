@@ -12,6 +12,9 @@ from click.testing import CliRunner
 
 from headroom.cli.main import main
 from headroom.copilot_auth import DEFAULT_API_URL, CopilotSubscriptionTokenResolution
+from headroom.providers.opencode.runtime import (
+    resolve_opencode_copilot_subscription_token_details,
+)
 
 
 @pytest.fixture
@@ -253,11 +256,11 @@ def test_wrap_opencode_subscription_can_use_opencode_auth_file(
     auth_file.write_text(
         json.dumps(
             {
-                "github-copilot": {
+                "github-copilot-enterprise": {
                     "type": "oauth",
-                    "refresh": "opencode-copilot-token",
-                    "access": "ignored-access-token",
-                    "expires": 0,
+                    "refresh": "opencode-github-refresh",
+                    "access": "opencode-copilot-access",
+                    "expires": 4102444800000,
                     "enterpriseUrl": "ghe.example.com",
                 }
             }
@@ -284,9 +287,48 @@ def test_wrap_opencode_subscription_can_use_opencode_auth_file(
         )
 
     assert result.exit_code == 0, result.output
-    assert captured["copilot_api_token"] == "opencode-copilot-token"
+    assert captured["copilot_api_token"] == "opencode-copilot-access"
     assert captured["openai_api_url"] == "https://copilot-api.ghe.example.com"
-    assert "opencode-copilot-token" not in result.output
+    assert "opencode-copilot-access" not in result.output
+
+
+def test_opencode_auth_resolver_exchanges_refresh_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(
+        json.dumps(
+            {
+                "github-copilot": {
+                    "type": "oauth",
+                    "refresh": "opencode-github-refresh",
+                    "access": "",
+                    "expires": 0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HEADROOM_OPENCODE_AUTH_FILE", str(auth_file))
+
+    def fake_exchange(refresh_token: str, *, exchange_url: str, timeout: float = 10.0) -> str:
+        assert refresh_token == "opencode-github-refresh"
+        assert exchange_url == "https://api.github.com/copilot_internal/v2/token"
+        assert timeout == 10.0
+        return "opencode-copilot-exchanged"
+
+    monkeypatch.setattr(
+        "headroom.providers.opencode.runtime._exchange_opencode_copilot_token",
+        fake_exchange,
+    )
+
+    resolution = resolve_opencode_copilot_subscription_token_details()
+
+    assert resolution is not None
+    assert resolution.token == "opencode-copilot-exchanged"
+    assert resolution.api_url == DEFAULT_API_URL
+    assert resolution.source.endswith(":github-copilot:exchange")
 
 
 def test_wrap_opencode_missing_binary_errors_clearly(

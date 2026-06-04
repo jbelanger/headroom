@@ -144,7 +144,16 @@ Headroom can route GitHub Copilot CLI subscription traffic through the local pro
 headroom wrap copilot --subscription -- --model gpt-4o
 ```
 
-This lets Headroom intercept OpenAI-compatible Copilot CLI requests and apply the same proxy compression pipeline before forwarding to GitHub Copilot's hosted API. The wrapper resolves the account-specific Copilot API endpoint and prints it as `COPILOT_PROVIDER_API_URL=...` during launch.
+This lets Headroom intercept OpenAI-compatible Copilot CLI requests and apply the same proxy compression pipeline before forwarding to GitHub Copilot's hosted API. The wrapper exchanges the reusable GitHub OAuth token for Copilot's short-lived API token using the Copilot Chat headers, resolves the account-specific Copilot API endpoint, and prints it as `COPILOT_PROVIDER_API_URL=...` during launch.
+
+For Copilot Business/Enterprise accounts that need an enterprise URL, set one
+of these before launching:
+
+```bash
+export GITHUB_COPILOT_ENTERPRISE_URL=github.com/enterprises/your-enterprise
+# or:
+export GITHUB_COPILOT_ENTERPRISE_DOMAIN=ghe.example.com
+```
 
 GPT-5-family Copilot models use the Responses wire API automatically in subscription mode:
 
@@ -163,8 +172,8 @@ API URL, token source, token fingerprint, and proxy log path without printing
 the token.
 
 From a source checkout, `python scripts/debug_copilot_subscription.py --model gpt-5.4`
-compares Headroom-style and opencode-style Copilot probes without reading OS
-secret stores by default.
+probes raw OAuth, token-exchange, and exchanged-token model-catalog behavior
+without reading OS secret stores by default.
 
 Platform support note: macOS auth reuse via Copilot CLI Keychain storage has been smoke-tested. Windows Credential Manager, Linux Secret Service / `secret-tool`, and Docker/CI token-injection paths are implemented or planned as auth-discovery paths, but still need real OS validation before they should be considered fully vetted. For Docker and CI, prefer passing an explicit `GITHUB_COPILOT_TOKEN` or `GITHUB_COPILOT_GITHUB_TOKEN` rather than relying on host keychain access.
 

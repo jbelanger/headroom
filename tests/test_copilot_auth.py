@@ -64,6 +64,7 @@ def test_resolve_subscription_bearer_token_skips_invalid_generic_token(
 ) -> None:
     monkeypatch.delenv("GITHUB_COPILOT_API_TOKEN", raising=False)
     monkeypatch.delenv("COPILOT_PROVIDER_BEARER_TOKEN", raising=False)
+    monkeypatch.setattr(copilot_auth, "_subscription_resolution_from_token_exchange", lambda _: None)
     monkeypatch.setattr(
         copilot_auth,
         "iter_oauth_token_candidates",
@@ -98,6 +99,7 @@ def test_resolve_subscription_bearer_token_details_preserves_safe_metadata(
 ) -> None:
     monkeypatch.delenv("GITHUB_COPILOT_API_TOKEN", raising=False)
     monkeypatch.delenv("COPILOT_PROVIDER_BEARER_TOKEN", raising=False)
+    monkeypatch.setattr(copilot_auth, "_subscription_resolution_from_token_exchange", lambda _: None)
     business_api = "https://api.business.githubcopilot.com"
     monkeypatch.setattr(
         copilot_auth,
@@ -124,6 +126,190 @@ def test_resolve_subscription_bearer_token_details_preserves_safe_metadata(
     assert resolution.confidence == "high"
     assert resolution.api_url == business_api
     assert resolution.token_fingerprint == copilot_auth.token_fingerprint("gho-copilot")
+
+
+def test_resolve_subscription_bearer_token_details_prefers_enterprise_api_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GITHUB_COPILOT_API_URL", raising=False)
+    monkeypatch.setenv("GITHUB_COPILOT_ENTERPRISE_URL", "github.com/enterprises/cbcrc")
+    monkeypatch.setattr(copilot_auth, "_subscription_resolution_from_token_exchange", lambda _: None)
+    monkeypatch.setattr(
+        copilot_auth,
+        "iter_oauth_token_candidates",
+        lambda: [
+            copilot_auth.CopilotTokenCandidate(
+                token="gho-copilot",
+                source="env:GITHUB_COPILOT_TOKEN",
+                confidence="high",
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        copilot_auth,
+        "_fetch_copilot_user_info",
+        lambda token: {"endpoints": {"api": "https://api.business.githubcopilot.com"}},
+    )
+
+    resolution = copilot_auth.resolve_subscription_bearer_token_details()
+
+    assert resolution is not None
+    assert resolution.api_url == "https://copilot-api.github.com/enterprises/cbcrc"
+
+
+def test_resolve_subscription_bearer_token_details_falls_back_to_model_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_COPILOT_API_TOKEN", "copilot-api")
+    monkeypatch.setenv("GITHUB_COPILOT_API_URL", "https://api.business.githubcopilot.com")
+    monkeypatch.setattr(copilot_auth, "_fetch_copilot_user_info", lambda _token: None)
+    calls: list[tuple[str, str]] = []
+
+    def fake_fetch_catalog(token: str, *, api_url: str, timeout: float) -> list[dict[str, object]]:
+        calls.append((token, api_url))
+        return [{"id": "gpt-4o"}]
+
+    monkeypatch.setattr(copilot_auth, "fetch_copilot_model_catalog", fake_fetch_catalog)
+
+    resolution = copilot_auth.resolve_subscription_bearer_token_details()
+
+    assert resolution is not None
+    assert resolution.token == "copilot-api"
+    assert resolution.source == "env:GITHUB_COPILOT_API_TOKEN"
+    assert resolution.api_url == "https://api.business.githubcopilot.com"
+    assert calls == [("copilot-api", "https://api.business.githubcopilot.com")]
+
+
+def test_resolve_subscription_bearer_token_details_exchanges_oauth_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GITHUB_COPILOT_API_TOKEN", raising=False)
+    monkeypatch.delenv("COPILOT_PROVIDER_BEARER_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_COPILOT_API_URL", raising=False)
+    monkeypatch.delenv("GITHUB_COPILOT_ENTERPRISE_URL", raising=False)
+    monkeypatch.delenv("GITHUB_COPILOT_ENTERPRISE_DOMAIN", raising=False)
+    monkeypatch.delenv("GITHUB_COPILOT_TOKEN_EXCHANGE_URL", raising=False)
+    monkeypatch.delenv("GITHUB_COPILOT_USER_AGENT", raising=False)
+    monkeypatch.delenv("GITHUB_COPILOT_EDITOR_VERSION", raising=False)
+    monkeypatch.delenv("GITHUB_COPILOT_EDITOR_PLUGIN_VERSION", raising=False)
+    monkeypatch.delenv("GITHUB_COPILOT_INTEGRATION_ID", raising=False)
+    monkeypatch.setattr(
+        copilot_auth,
+        "iter_oauth_token_candidates",
+        lambda: [
+            copilot_auth.CopilotTokenCandidate(
+                token="gho-oauth",
+                source="env:GITHUB_COPILOT_TOKEN",
+                confidence="high",
+            ),
+        ],
+    )
+    monkeypatch.setattr(copilot_auth, "_fetch_copilot_user_info", lambda _token: None)
+    captured: dict[str, str] = {}
+
+    def fake_exchange(headers: dict[str, str]) -> dict[str, object]:
+        captured.update(headers)
+        return {
+            "token": "copilot-api",
+            "expires_at": int(time.time()) + 3600,
+            "endpoints": {"api": "https://api.business.githubcopilot.com"},
+        }
+
+    monkeypatch.setattr(
+        copilot_auth.CopilotTokenProvider,
+        "_exchange_token_sync",
+        staticmethod(fake_exchange),
+    )
+
+    resolution = copilot_auth.resolve_subscription_bearer_token_details()
+
+    assert resolution is not None
+    assert resolution.token == "copilot-api"
+    assert resolution.source == "env:GITHUB_COPILOT_TOKEN:token-exchange"
+    assert resolution.confidence == "copilot-chat-token-exchange"
+    assert resolution.api_url == "https://api.business.githubcopilot.com"
+    assert resolution.token_fingerprint == copilot_auth.token_fingerprint("copilot-api")
+    assert captured == {
+        "Accept": "application/json",
+        "Authorization": "Bearer gho-oauth",
+        "User-Agent": "GitHubCopilotChat/0.35.0",
+        "Editor-Version": "vscode/1.107.0",
+        "Editor-Plugin-Version": "copilot-chat/0.35.0",
+        "Copilot-Integration-Id": "vscode-chat",
+    }
+
+
+def test_resolve_subscription_exchange_prefers_enterprise_api_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GITHUB_COPILOT_API_TOKEN", raising=False)
+    monkeypatch.delenv("COPILOT_PROVIDER_BEARER_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_COPILOT_API_URL", raising=False)
+    monkeypatch.delenv("GITHUB_COPILOT_ENTERPRISE_DOMAIN", raising=False)
+    monkeypatch.delenv("GITHUB_COPILOT_TOKEN_EXCHANGE_URL", raising=False)
+    monkeypatch.setenv("GITHUB_COPILOT_ENTERPRISE_URL", "github.com/enterprises/cbcrc")
+    monkeypatch.setattr(
+        copilot_auth,
+        "iter_oauth_token_candidates",
+        lambda: [
+            copilot_auth.CopilotTokenCandidate(
+                token="gho-oauth",
+                source="env:GITHUB_COPILOT_TOKEN",
+                confidence="high",
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        copilot_auth.CopilotTokenProvider,
+        "_exchange_token_sync",
+        staticmethod(lambda _headers: {"token": "copilot-api"}),
+    )
+
+    resolution = copilot_auth.resolve_subscription_bearer_token_details()
+
+    assert resolution is not None
+    assert resolution.api_url == "https://copilot-api.github.com/enterprises/cbcrc"
+    assert (
+        copilot_auth._token_exchange_url()
+        == "https://api.github.com/enterprises/cbcrc/copilot_internal/v2/token"
+    )
+
+
+def test_resolve_subscription_bearer_token_details_falls_back_when_exchange_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GITHUB_COPILOT_API_TOKEN", raising=False)
+    monkeypatch.delenv("COPILOT_PROVIDER_BEARER_TOKEN", raising=False)
+    monkeypatch.setattr(
+        copilot_auth,
+        "iter_oauth_token_candidates",
+        lambda: [
+            copilot_auth.CopilotTokenCandidate(
+                token="gho-oauth",
+                source="env:GITHUB_COPILOT_TOKEN",
+                confidence="high",
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        copilot_auth.CopilotTokenProvider,
+        "_exchange_token_sync",
+        staticmethod(lambda _headers: {}),
+    )
+    monkeypatch.setattr(
+        copilot_auth,
+        "_fetch_copilot_user_info",
+        lambda token: {"endpoints": {"api": "https://api.githubcopilot.com"}}
+        if token == "gho-oauth"
+        else None,
+    )
+
+    resolution = copilot_auth.resolve_subscription_bearer_token_details()
+
+    assert resolution is not None
+    assert resolution.token == "gho-oauth"
+    assert resolution.source == "env:GITHUB_COPILOT_TOKEN"
+    assert resolution.confidence == "high"
 
 
 def test_should_exchange_oauth_token_supports_truthy_values(
@@ -327,13 +513,48 @@ def test_has_oauth_auth_false_when_no_tokens(monkeypatch: pytest.MonkeyPatch) ->
     assert copilot_auth.has_oauth_auth() is False
 
 
-def test_is_copilot_api_url_matches_expected_hosts() -> None:
+def test_is_copilot_api_url_matches_expected_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GITHUB_COPILOT_API_URL", raising=False)
+
     assert copilot_auth.is_copilot_api_url("https://api.githubcopilot.com/v1/chat/completions")
     assert copilot_auth.is_copilot_api_url("wss://api.githubcopilot.com/v1/responses")
     assert not copilot_auth.is_copilot_api_url("https://api.openai.com/v1/chat/completions")
 
 
-def test_build_copilot_upstream_url_strips_v1_only_for_copilot_hosts() -> None:
+def test_is_copilot_api_url_trusts_configured_enterprise_api_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_COPILOT_API_URL", "https://copilot-api.ghe.example.com")
+
+    assert copilot_auth.is_copilot_api_url("https://copilot-api.ghe.example.com/v1/responses")
+    assert not copilot_auth.is_copilot_api_url("https://copilot-api.other.example.com/v1/responses")
+
+
+def test_copilot_api_url_from_enterprise_url_matches_opencode_transform() -> None:
+    assert (
+        copilot_auth.copilot_api_url_from_enterprise_url("https://github.com/enterprises/cbcrc/")
+        == "https://copilot-api.github.com/enterprises/cbcrc"
+    )
+
+
+def test_resolve_copilot_api_url_prefers_enterprise_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GITHUB_COPILOT_API_URL", raising=False)
+    monkeypatch.setenv("GITHUB_COPILOT_ENTERPRISE_URL", "github.com/enterprises/cbcrc")
+
+    assert (
+        copilot_auth.resolve_copilot_api_url(None)
+        == "https://copilot-api.github.com/enterprises/cbcrc"
+    )
+
+
+def test_build_copilot_upstream_url_strips_v1_only_for_copilot_hosts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GITHUB_COPILOT_API_URL", raising=False)
+    monkeypatch.delenv("GITHUB_COPILOT_ENTERPRISE_URL", raising=False)
+
     assert (
         copilot_auth.build_copilot_upstream_url(
             "https://api.githubcopilot.com",
@@ -347,6 +568,21 @@ def test_build_copilot_upstream_url_strips_v1_only_for_copilot_hosts() -> None:
             "/v1/chat/completions",
         )
         == "https://api.openai.com/v1/chat/completions"
+    )
+
+
+def test_build_copilot_upstream_url_strips_v1_for_configured_enterprise_api_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GITHUB_COPILOT_API_URL", raising=False)
+    monkeypatch.setenv("GITHUB_COPILOT_ENTERPRISE_URL", "ghe.example.com")
+
+    assert (
+        copilot_auth.build_copilot_upstream_url(
+            "https://copilot-api.ghe.example.com",
+            "/v1/responses",
+        )
+        == "https://copilot-api.ghe.example.com/responses"
     )
 
 
@@ -366,13 +602,21 @@ def test_apply_copilot_api_auth_replaces_authorization(monkeypatch: pytest.Monke
 
     headers = asyncio.run(
         copilot_auth.apply_copilot_api_auth(
-            {"authorization": "Bearer downstream-token"},
+            {"authorization": "Bearer downstream-token", "x-api-key": "sk-downstream"},
             url="https://api.githubcopilot.com/v1/chat/completions",
         )
     )
 
     assert headers["Authorization"] == "Bearer copilot-session"
     assert "authorization" not in headers
+    assert "x-api-key" not in headers
+    assert headers["User-Agent"] == "GitHubCopilotChat/0.35.0"
+    assert headers["Editor-Version"] == "vscode/1.107.0"
+    assert headers["Editor-Plugin-Version"] == "copilot-chat/0.35.0"
+    assert headers["Copilot-Integration-Id"] == "vscode-chat"
+    assert headers["X-GitHub-Api-Version"] == "2026-06-01"
+    assert headers["Openai-Intent"] == "conversation-edits"
+    assert headers["X-Initiator"] == "user"
 
 
 def test_token_provider_reuses_oauth_token_without_exchange(
@@ -409,9 +653,11 @@ def test_token_provider_can_exchange_when_enabled(monkeypatch: pytest.MonkeyPatc
 
     provider = copilot_auth.CopilotTokenProvider()
     calls = {"count": 0}
+    captured: dict[str, str] = {}
 
     def fake_exchange(headers: dict[str, str]) -> dict[str, object]:
         calls["count"] += 1
+        captured.update(headers)
         return {
             "token": "copilot-api",
             "expires_at": int(time.time()) + 3600,
@@ -428,6 +674,11 @@ def test_token_provider_can_exchange_when_enabled(monkeypatch: pytest.MonkeyPatc
     assert first.token == "copilot-api"
     assert second.token == "copilot-api"
     assert calls["count"] == 1
+    assert captured["Authorization"] == "Bearer gho-oauth"
+    assert captured["User-Agent"] == "GitHubCopilotChat/0.35.0"
+    assert captured["Editor-Version"] == "vscode/1.107.0"
+    assert captured["Editor-Plugin-Version"] == "copilot-chat/0.35.0"
+    assert captured["Copilot-Integration-Id"] == "vscode-chat"
 
 
 def test_token_provider_prefers_explicit_api_token(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 from headroom.copilot_auth import (
     DEFAULT_API_URL as DEFAULT_COPILOT_API_URL,
@@ -23,6 +27,15 @@ DEFAULT_PROVIDER_ID = "headroom"
 DEFAULT_CONTEXT_LIMIT = 128_000
 DEFAULT_OUTPUT_LIMIT = 16_384
 DEFAULT_COPILOT_PROVIDER_ID = "github-copilot"
+ENTERPRISE_COPILOT_PROVIDER_ID = "github-copilot-enterprise"
+COPILOT_PROVIDER_IDS = (ENTERPRISE_COPILOT_PROVIDER_ID, DEFAULT_COPILOT_PROVIDER_ID)
+OPENCODE_COPILOT_HEADERS = {
+    "Accept": "application/json",
+    "User-Agent": "GitHubCopilotChat/0.35.0",
+    "Editor-Version": "vscode/1.107.0",
+    "Editor-Plugin-Version": "copilot-chat/0.35.0",
+    "Copilot-Integration-Id": "vscode-chat",
+}
 
 WireApi = Literal["completions", "responses"]
 
@@ -211,6 +224,71 @@ def _read_json_object(path: Path) -> dict[str, object] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _normalize_domain(value: str) -> str:
+    return value.replace("https://", "", 1).replace("http://", "", 1).rstrip("/")
+
+
+def _entry_api_url(auth: dict[str, object]) -> str:
+    enterprise_url = auth.get("enterpriseUrl")
+    if isinstance(enterprise_url, str) and enterprise_url.strip():
+        return copilot_api_url_from_enterprise_url(enterprise_url.strip()).rstrip("/")
+    return DEFAULT_COPILOT_API_URL
+
+
+def _entry_exchange_url(auth: dict[str, object]) -> str:
+    enterprise_url = auth.get("enterpriseUrl")
+    domain = _normalize_domain(enterprise_url.strip()) if isinstance(enterprise_url, str) else "github.com"
+    return f"https://api.{domain}/copilot_internal/v2/token"
+
+
+def _expires_ms(value: object) -> float | None:
+    if isinstance(value, (int, float)):
+        timestamp = float(value)
+        return timestamp * 1000 if timestamp < 10_000_000_000 else timestamp
+    if isinstance(value, str) and value.strip():
+        raw = value.strip()
+        if raw.isdigit():
+            return _expires_ms(float(raw))
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed.astimezone(timezone.utc).timestamp() * 1000
+    return None
+
+
+def _valid_access_token(auth: dict[str, object]) -> str | None:
+    access = auth.get("access")
+    if not isinstance(access, str) or not access.strip():
+        return None
+    expires_ms = _expires_ms(auth.get("expires"))
+    if expires_ms is None or expires_ms <= (time.time() * 1000):
+        return None
+    return access.strip()
+
+
+def _exchange_opencode_copilot_token(
+    refresh_token: str,
+    *,
+    exchange_url: str,
+    timeout: float = 10.0,
+) -> str | None:
+    headers = {
+        **OPENCODE_COPILOT_HEADERS,
+        "Authorization": f"Bearer {refresh_token}",
+    }
+    req = urllib_request.Request(exchange_url, headers=headers)
+    try:
+        with urllib_request.urlopen(req, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib_error.URLError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    token = payload.get("token")
+    return token.strip() if isinstance(token, str) and token.strip() else None
+
+
 def _opencode_auth_payload(
     environ: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, object], str] | None:
@@ -241,25 +319,35 @@ def resolve_opencode_copilot_subscription_token_details(
         return None
 
     payload, source = payload_with_source
-    auth = payload.get(DEFAULT_COPILOT_PROVIDER_ID)
-    if not isinstance(auth, dict):
-        auth = payload.get(f"{DEFAULT_COPILOT_PROVIDER_ID}/")
-    if not isinstance(auth, dict) or auth.get("type") != "oauth":
-        return None
+    for provider_id in COPILOT_PROVIDER_IDS:
+        auth = payload.get(provider_id)
+        if not isinstance(auth, dict):
+            auth = payload.get(f"{provider_id}/")
+        if not isinstance(auth, dict) or auth.get("type") != "oauth":
+            continue
 
-    token = auth.get("refresh") or auth.get("access")
-    if not isinstance(token, str) or not token.strip():
-        return None
+        token = _valid_access_token(auth)
+        token_kind = "access"
+        if token is None:
+            refresh_token = auth.get("refresh")
+            if not isinstance(refresh_token, str) or not refresh_token.strip():
+                continue
+            token = _exchange_opencode_copilot_token(
+                refresh_token.strip(),
+                exchange_url=_entry_exchange_url(auth),
+            )
+            token_kind = "exchange"
+            if token is None:
+                token = refresh_token.strip()
+                token_kind = "refresh"
 
-    enterprise_url = auth.get("enterpriseUrl")
-    api_url = DEFAULT_COPILOT_API_URL
-    if isinstance(enterprise_url, str) and enterprise_url.strip():
-        api_url = copilot_api_url_from_enterprise_url(enterprise_url.strip()).rstrip("/")
+        api_url = _entry_api_url(auth)
+        return CopilotSubscriptionTokenResolution(
+            token=token,
+            source=f"opencode:{source}:{provider_id}:{token_kind}",
+            confidence=f"opencode-oauth-{token_kind}",
+            api_url=api_url,
+            token_fingerprint=token_fingerprint(token),
+        )
 
-    return CopilotSubscriptionTokenResolution(
-        token=token.strip(),
-        source=f"opencode:{source}:{DEFAULT_COPILOT_PROVIDER_ID}",
-        confidence="opencode-oauth",
-        api_url=api_url,
-        token_fingerprint=token_fingerprint(token.strip()),
-    )
+    return None

@@ -2678,6 +2678,12 @@ def copilot(
         )
         env_vars_display.append(f"COPILOT_PROVIDER_API_URL={openai_api_url}")
         if debug_enabled:
+            token_exchange_state = (
+                "enabled"
+                if subscription_resolution is not None
+                and subscription_resolution.source.endswith(":token-exchange")
+                else "disabled"
+            )
             env_vars_display.extend(
                 [
                     "HEADROOM_COPILOT_DEBUG=1",
@@ -2699,7 +2705,7 @@ def copilot(
                         if subscription_resolution is not None
                         else f"COPILOT_DEBUG_TOKEN_FINGERPRINT={token_fingerprint(client_bearer)}"
                     ),
-                    "COPILOT_DEBUG_TOKEN_EXCHANGE=disabled",
+                    f"COPILOT_DEBUG_TOKEN_EXCHANGE={token_exchange_state}",
                     f"COPILOT_DEBUG_PROXY_LOG={_get_log_path()}",
                 ]
             )
@@ -3302,6 +3308,11 @@ def opencode(
             )
             if debug_enabled:
                 env["HEADROOM_COPILOT_DEBUG"] = "1"
+                token_exchange_state = (
+                    "enabled"
+                    if subscription_resolution.source.endswith((":exchange", ":token-exchange"))
+                    else "disabled"
+                )
                 env_vars_display.extend(
                     [
                         "HEADROOM_COPILOT_DEBUG=1",
@@ -3314,7 +3325,7 @@ def opencode(
                             "COPILOT_DEBUG_TOKEN_FINGERPRINT="
                             f"{subscription_resolution.token_fingerprint}"
                         ),
-                        "COPILOT_DEBUG_TOKEN_EXCHANGE=disabled",
+                        f"COPILOT_DEBUG_TOKEN_EXCHANGE={token_exchange_state}",
                         f"COPILOT_DEBUG_PROXY_LOG={_get_log_path()}",
                     ]
                 )

@@ -58,6 +58,7 @@ def test_env_token_resolves_subscription_without_secret_store(
     _stub_all_secret_stores(monkeypatch)
     _clear_token_env(monkeypatch)
     monkeypatch.setenv("GITHUB_COPILOT_TOKEN", "gho-env-universal")
+    monkeypatch.setattr(copilot_auth, "_subscription_resolution_from_token_exchange", lambda _: None)
     monkeypatch.setattr(
         copilot_auth,
         "_fetch_copilot_user_info",
@@ -88,6 +89,7 @@ def test_subscription_rejects_token_github_does_not_accept(
     _clear_token_env(monkeypatch)
     # A generic GitHub token is present but GitHub's Copilot API rejects it;
     # a valid Copilot token is discoverable behind it.
+    monkeypatch.setattr(copilot_auth, "_subscription_resolution_from_token_exchange", lambda _: None)
     monkeypatch.setattr(
         copilot_auth,
         "iter_oauth_token_candidates",
@@ -174,6 +176,7 @@ def test_end_to_end_subscription_chain(monkeypatch: pytest.MonkeyPatch) -> None:
     _stub_all_secret_stores(monkeypatch)
     _clear_token_env(monkeypatch)
     monkeypatch.setenv("GITHUB_COPILOT_TOKEN", "gho-seat-token")
+    monkeypatch.setattr(copilot_auth, "_subscription_resolution_from_token_exchange", lambda _: None)
     monkeypatch.setattr(
         copilot_auth,
         "_fetch_copilot_user_info",
