@@ -161,6 +161,10 @@ The debug output reports the selected model, wire API, account-specific Copilot
 API URL, token source, token fingerprint, and proxy log path without printing
 the token.
 
+From a source checkout, `python scripts/debug_copilot_subscription.py --model gpt-5.4`
+compares Headroom-style and opencode-style Copilot probes without reading OS
+secret stores by default.
+
 Platform support note: macOS auth reuse via Copilot CLI Keychain storage has been smoke-tested. Windows Credential Manager, Linux Secret Service / `secret-tool`, and Docker/CI token-injection paths are implemented or planned as auth-discovery paths, but still need real OS validation before they should be considered fully vetted. For Docker and CI, prefer passing an explicit `GITHUB_COPILOT_TOKEN` or `GITHUB_COPILOT_GITHUB_TOKEN` rather than relying on host keychain access.
 
 ## When to use · When to skip

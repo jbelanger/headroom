@@ -12,6 +12,14 @@ import pytest
 from headroom import copilot_auth
 
 
+@pytest.fixture(autouse=True)
+def _block_real_copilot_secret_stores(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep unit tests from touching Keychain or Secret Service."""
+
+    monkeypatch.setattr(copilot_auth, "read_macos_keychain_token", lambda *, host: None)
+    monkeypatch.setattr(copilot_auth, "read_linux_secret_token", lambda *, host: None)
+
+
 def test_read_cached_oauth_token_prefers_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GITHUB_COPILOT_TOKEN", "gho-env")
     assert copilot_auth.read_cached_oauth_token() == "gho-env"

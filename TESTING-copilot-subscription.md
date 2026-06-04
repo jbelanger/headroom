@@ -77,6 +77,22 @@ account-specific Copilot API URL, selected wire API, and the proxy log path.
 Please include those lines plus any `event=copilot_debug_*` lines from
 `~/.headroom/logs/proxy.log` when reporting Business/Enterprise failures.
 
+If opencode works with the same account but Headroom does not, run the one-time
+diagnostic script from a source checkout:
+
+```bash
+python scripts/debug_copilot_subscription.py --model gpt-5.4
+```
+
+By default this reads env vars and opencode's `auth.json` only; it does **not**
+touch Keychain, Secret Service, Credential Manager, or `gh`. To also POST tiny
+test requests across the likely Copilot endpoints, add `--probe-generation`
+(this may consume Copilot quota):
+
+```bash
+python scripts/debug_copilot_subscription.py --model gpt-5.4 --probe-generation
+```
+
 - **If it prints `HEADROOM_OK`** → auto-discovery works on your Linux. 🎉 Report success.
 - **If it errors with "no reusable bearer token"** → discovery missed your token. Please grab the **schema** so we can fix it (redact the secret), then confirm the mechanism works via the env var:
   ```bash
