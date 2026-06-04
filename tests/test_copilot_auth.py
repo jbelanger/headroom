@@ -85,6 +85,39 @@ def test_resolve_subscription_bearer_token_skips_invalid_generic_token(
     assert copilot_auth.resolve_subscription_bearer_token() == "gho-copilot"
 
 
+def test_resolve_subscription_bearer_token_details_preserves_safe_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GITHUB_COPILOT_API_TOKEN", raising=False)
+    monkeypatch.delenv("COPILOT_PROVIDER_BEARER_TOKEN", raising=False)
+    business_api = "https://api.business.githubcopilot.com"
+    monkeypatch.setattr(
+        copilot_auth,
+        "iter_oauth_token_candidates",
+        lambda: [
+            copilot_auth.CopilotTokenCandidate(
+                token="gho-copilot",
+                source="windows-credential-manager:copilot-cli",
+                confidence="high",
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        copilot_auth,
+        "_fetch_copilot_user_info",
+        lambda token: {"endpoints": {"api": business_api}} if token == "gho-copilot" else None,
+    )
+
+    resolution = copilot_auth.resolve_subscription_bearer_token_details()
+
+    assert resolution is not None
+    assert resolution.token == "gho-copilot"
+    assert resolution.source == "windows-credential-manager:copilot-cli"
+    assert resolution.confidence == "high"
+    assert resolution.api_url == business_api
+    assert resolution.token_fingerprint == copilot_auth.token_fingerprint("gho-copilot")
+
+
 def test_should_exchange_oauth_token_supports_truthy_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

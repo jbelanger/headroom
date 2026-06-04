@@ -17,6 +17,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from datetime import datetime
@@ -27,6 +28,7 @@ from headroom.proxy.helpers import (
     _headroom_bypass_enabled,
     extract_tags,
     jitter_delay_ms,
+    redact_for_wire_debug,
 )
 from headroom.proxy.stage_timer import StageTimer, emit_stage_timings_log
 from headroom.proxy.ws_session_registry import (
@@ -41,7 +43,12 @@ if TYPE_CHECKING:
 
 import httpx
 
-from headroom.copilot_auth import apply_copilot_api_auth, build_copilot_upstream_url
+from headroom.copilot_auth import (
+    apply_copilot_api_auth,
+    build_copilot_upstream_url,
+    copilot_debug_enabled,
+    is_copilot_api_url,
+)
 from headroom.pipeline import PipelineStage, summarize_routing_markers
 from headroom.proxy.auth_mode import classify_auth_mode, classify_client
 from headroom.proxy.compression_decision import CompressionDecision
@@ -58,6 +65,136 @@ _OPENAI_RESPONSES_UNIT_PARALLELISM_MAX = 16
 _OPENAI_RESPONSES_UNIT_CACHE_INIT_LOCK = threading.RLock()
 _OPENAI_RESPONSES_UNIT_EXECUTOR_LOCK = threading.RLock()
 _OPENAI_RESPONSES_UNIT_EXECUTOR: ThreadPoolExecutor | None = None
+_COPILOT_DEBUG_RESPONSE_PREVIEW_CHARS = 4000
+_COPILOT_DEBUG_HEADER_NAMES = {
+    "content-type",
+    "retry-after",
+    "x-request-id",
+    "x-github-request-id",
+    "x-copilot-request-id",
+    "cf-ray",
+}
+_COPILOT_DEBUG_HEADER_PREFIXES = (
+    "x-ratelimit-",
+    "x-copilot-",
+)
+
+
+def _copilot_debug_header_subset(headers: Mapping[str, Any]) -> dict[str, str]:
+    """Return non-secret upstream response headers useful for Copilot debugging."""
+
+    safe_headers: dict[str, str] = {}
+    for key, value in headers.items():
+        normalized = str(key).lower()
+        if normalized in _COPILOT_DEBUG_HEADER_NAMES or normalized.startswith(
+            _COPILOT_DEBUG_HEADER_PREFIXES
+        ):
+            safe_headers[str(key)] = str(value)
+    return safe_headers
+
+
+def _copilot_debug_error_preview(response: httpx.Response) -> str:
+    """Return a redacted, bounded upstream error body preview for proxy.log."""
+
+    if response.status_code < 400:
+        return ""
+    try:
+        payload: Any = response.json()
+    except Exception:
+        try:
+            payload = response.text
+        except Exception as exc:
+            payload = f"<unreadable response body: {type(exc).__name__}>"
+
+    redacted = redact_for_wire_debug(payload)
+    try:
+        if isinstance(redacted, str):
+            preview = redacted
+        else:
+            preview = json.dumps(redacted, ensure_ascii=False, default=str, separators=(",", ":"))
+    except Exception:
+        preview = repr(redacted)
+
+    if len(preview) > _COPILOT_DEBUG_RESPONSE_PREVIEW_CHARS:
+        preview = preview[:_COPILOT_DEBUG_RESPONSE_PREVIEW_CHARS] + "...[truncated]"
+    return preview
+
+
+def _log_copilot_debug_route(
+    *,
+    request_id: str,
+    endpoint: str,
+    method: str,
+    url: str,
+    model: str | None,
+    stream: bool | None,
+    auth_mode: str | None = None,
+) -> None:
+    """Log safe Copilot upstream routing diagnostics when explicitly enabled."""
+
+    if not copilot_debug_enabled() or not is_copilot_api_url(url):
+        return
+
+    logger.info(
+        "event=copilot_debug_route request_id=%s endpoint=%s method=%s url=%s "
+        "model=%s stream=%s auth_mode=%s",
+        request_id,
+        endpoint,
+        method,
+        url,
+        model or "unknown",
+        stream,
+        auth_mode or "unknown",
+    )
+
+
+def _log_copilot_debug_response(
+    *,
+    request_id: str,
+    endpoint: str,
+    method: str,
+    url: str,
+    model: str | None,
+    response: httpx.Response,
+) -> None:
+    """Log safe Copilot upstream response diagnostics when explicitly enabled."""
+
+    if not copilot_debug_enabled() or not is_copilot_api_url(url):
+        return
+
+    headers_json = json.dumps(
+        redact_for_wire_debug(_copilot_debug_header_subset(response.headers)),
+        ensure_ascii=False,
+        default=str,
+        separators=(",", ":"),
+    )
+    error_preview = _copilot_debug_error_preview(response)
+    if error_preview:
+        logger.info(
+            "event=copilot_debug_response request_id=%s endpoint=%s method=%s url=%s "
+            "model=%s status_code=%s headers=%s error_preview=%s",
+            request_id,
+            endpoint,
+            method,
+            url,
+            model or "unknown",
+            response.status_code,
+            headers_json,
+            error_preview,
+        )
+        return
+
+    logger.info(
+        "event=copilot_debug_response request_id=%s endpoint=%s method=%s url=%s "
+        "model=%s status_code=%s headers=%s",
+        request_id,
+        endpoint,
+        method,
+        url,
+        model or "unknown",
+        response.status_code,
+        headers_json,
+    )
 
 
 def _openai_responses_unit_parallelism() -> int:
@@ -2164,6 +2301,15 @@ class OpenAIHandlerMixin:
 
         # Direct OpenAI API (no backend configured)
         url = build_copilot_upstream_url(self.OPENAI_API_URL, "/v1/chat/completions")
+        _log_copilot_debug_route(
+            request_id=request_id,
+            endpoint="/v1/chat/completions",
+            method="POST",
+            url=url,
+            model=model,
+            stream=stream,
+            auth_mode=auth_mode.value,
+        )
 
         try:
             if stream:
@@ -2203,6 +2349,14 @@ class OpenAIHandlerMixin:
             else:
                 headers = await apply_copilot_api_auth(headers, url=url)
                 response = await self._retry_request("POST", url, headers, body)
+                _log_copilot_debug_response(
+                    request_id=request_id,
+                    endpoint="/v1/chat/completions",
+                    method="POST",
+                    url=url,
+                    model=model,
+                    response=response,
+                )
                 self.pipeline_extensions.emit(
                     PipelineStage.POST_SEND,
                     operation="proxy.request",
@@ -2893,6 +3047,15 @@ class OpenAIHandlerMixin:
             url = "https://chatgpt.com/backend-api/codex/responses"
         else:
             url = build_copilot_upstream_url(self.OPENAI_API_URL, "/v1/responses")
+        _log_copilot_debug_route(
+            request_id=request_id,
+            endpoint="/v1/responses",
+            method="POST",
+            url=url,
+            model=model,
+            stream=stream,
+            auth_mode=auth_mode.value,
+        )
 
         # The standalone Rust proxy has native /v1/responses item handling,
         # but the default CLI runtime is this Python proxy. Compress the
@@ -3026,6 +3189,14 @@ class OpenAIHandlerMixin:
             else:
                 headers = await apply_copilot_api_auth(headers, url=url)
                 response = await self._retry_request("POST", url, headers, body)
+                _log_copilot_debug_response(
+                    request_id=request_id,
+                    endpoint="/v1/responses",
+                    method="POST",
+                    url=url,
+                    model=model,
+                    response=response,
+                )
                 _response_body_for_debug: Any = None
                 _response_raw_for_debug: str | None = None
                 try:
@@ -5768,6 +5939,9 @@ class OpenAIHandlerMixin:
         # Preserve query string parameters
         if request.url.query:
             url = f"{url}?{request.url.query}"
+        debug_request_id: str | None = None
+        if copilot_debug_enabled() and is_copilot_api_url(url):
+            debug_request_id = await self._next_request_id()
 
         headers = dict(request.headers.items())
         headers.pop("host", None)
@@ -5788,6 +5962,15 @@ class OpenAIHandlerMixin:
         body = await request.body()
 
         headers = await apply_copilot_api_auth(headers, url=url)
+        if debug_request_id is not None:
+            _log_copilot_debug_route(
+                request_id=debug_request_id,
+                endpoint=endpoint_name or path,
+                method=request.method,
+                url=url,
+                model=f"passthrough:{endpoint_name or path}",
+                stream=None,
+            )
         try:
             response = await self.http_client.request(  # type: ignore[union-attr]
                 method=request.method,
@@ -5795,6 +5978,15 @@ class OpenAIHandlerMixin:
                 headers=headers,
                 content=body,
             )
+            if debug_request_id is not None:
+                _log_copilot_debug_response(
+                    request_id=debug_request_id,
+                    endpoint=endpoint_name or path,
+                    method=request.method,
+                    url=url,
+                    model=f"passthrough:{endpoint_name or path}",
+                    response=response,
+                )
         except (httpx.ConnectError, httpx.TimeoutException) as e:
             logger.warning(
                 "Passthrough request failed before upstream response: %s %s -> %s: %s",
@@ -5827,7 +6019,7 @@ class OpenAIHandlerMixin:
         # via zero defaults.
         if endpoint_name and provider:
             latency_ms = (time.time() - start_time) * 1000
-            request_id = await self._next_request_id()
+            request_id = debug_request_id or await self._next_request_id()
             await self._record_request_outcome(
                 RequestOutcome(
                     request_id=request_id,

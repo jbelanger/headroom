@@ -8,6 +8,7 @@ from .wrap import (
     query_proxy_config,
     resolve_provider_type,
     resolve_wire_api,
+    selected_model,
     validate_configuration,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "query_proxy_config",
     "resolve_provider_type",
     "resolve_wire_api",
+    "selected_model",
     "validate_configuration",
 ]

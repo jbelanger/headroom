@@ -66,6 +66,17 @@ API automatically:
 headroom wrap copilot --subscription -- --model gpt-5.4 -p "Reply with exactly: HEADROOM_OK"
 ```
 
+For Business or Enterprise accounts, add debug output if the same command fails:
+
+```bash
+headroom wrap copilot --subscription --debug-copilot -- --model gpt-5.4 -p "Reply with exactly: HEADROOM_OK"
+```
+
+This prints safe routing diagnostics such as token source, token fingerprint,
+account-specific Copilot API URL, selected wire API, and the proxy log path.
+Please include those lines plus any `event=copilot_debug_*` lines from
+`~/.headroom/logs/proxy.log` when reporting Business/Enterprise failures.
+
 - **If it prints `HEADROOM_OK`** → auto-discovery works on your Linux. 🎉 Report success.
 - **If it errors with "no reusable bearer token"** → discovery missed your token. Please grab the **schema** so we can fix it (redact the secret), then confirm the mechanism works via the env var:
   ```bash
@@ -123,6 +134,8 @@ with:
 - **OS + version** and **how you installed** (pipx/pip wheel, Docker, source).
 - Was plain `copilot` logged in?
 - Did `wrap copilot --subscription` print **`HEADROOM_OK`**? Paste any error.
+- For Business/Enterprise failures, rerun with `--debug-copilot` and include
+  the safe `COPILOT_DEBUG_*` lines plus `event=copilot_debug_*` proxy log lines.
 - Did it work **without** setting `GITHUB_COPILOT_TOKEN` (auto-discovery), or
   only **with** it?
 - The **storage schema** if discovery failed (`secret-tool search --all` /

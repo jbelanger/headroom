@@ -38,10 +38,12 @@ import click
 
 from headroom._version import __version__ as _HEADROOM_VERSION
 from headroom.copilot_auth import (
+    copilot_debug_enabled,
     has_oauth_auth,
     resolve_client_bearer_token,
     resolve_copilot_api_url,
-    resolve_subscription_bearer_token,
+    resolve_subscription_bearer_token_details,
+    token_fingerprint,
 )
 from headroom.providers.aider import build_launch_env as _build_aider_launch_env
 from headroom.providers.claude import proxy_base_url as _claude_proxy_base_url
@@ -66,6 +68,9 @@ from headroom.providers.copilot import (
 )
 from headroom.providers.copilot import (
     resolve_wire_api as _copilot_resolve_wire_api,
+)
+from headroom.providers.copilot import (
+    selected_model as _copilot_selected_model,
 )
 from headroom.providers.copilot import (
     validate_configuration as _validate_copilot_configuration,
@@ -165,6 +170,7 @@ def _start_proxy(
     region: str | None = None,
     openai_api_url: str | None = None,
     copilot_api_token: str | None = None,
+    copilot_debug: bool = False,
 ) -> subprocess.Popen:
     """Start Headroom proxy as a background subprocess.
 
@@ -226,6 +232,8 @@ def _start_proxy(
     # GITHUB_COPILOT_API_TOKEN directly, making upstream auth deterministic.
     if copilot_api_token:
         proxy_env["GITHUB_COPILOT_API_TOKEN"] = copilot_api_token
+    if copilot_debug:
+        proxy_env["HEADROOM_COPILOT_DEBUG"] = "1"
 
     proc = subprocess.Popen(
         cmd,
@@ -1626,6 +1634,7 @@ def _ensure_proxy(
     region: str | None = None,
     openai_api_url: str | None = None,
     copilot_api_token: str | None = None,
+    copilot_debug: bool = False,
 ) -> subprocess.Popen | None:
     """Start or verify proxy. Returns process handle if we started it."""
     helpers = _live_wrap_module()
@@ -1756,6 +1765,12 @@ def _ensure_proxy(
 
             if not needs_restart:
                 click.echo(f"  Proxy already running on port {port}")
+                if copilot_debug:
+                    click.echo(
+                        "  Copilot debug: proxy-side upstream diagnostics require a proxy "
+                        "started with HEADROOM_COPILOT_DEBUG=1. Stop the existing proxy "
+                        "or rerun on a different --port to capture proxy.log details."
+                    )
                 return None
 
         # Start (or restart) the proxy with the requested flags
@@ -1774,6 +1789,7 @@ def _ensure_proxy(
                     region=region,
                     openai_api_url=openai_api_url,
                     copilot_api_token=copilot_api_token,
+                    copilot_debug=copilot_debug,
                 ),
             )
             click.echo(f"  Proxy ready on http://127.0.0.1:{port}")
@@ -1784,6 +1800,11 @@ def _ensure_proxy(
     else:
         if not helpers._check_proxy(port):
             click.echo(f"  Warning: No proxy detected on port {port}")
+        elif copilot_debug:
+            click.echo(
+                "  Copilot debug: --no-proxy uses the already-running proxy; proxy-side "
+                "diagnostics require that proxy to have HEADROOM_COPILOT_DEBUG=1."
+            )
         return None
 
 
@@ -1850,6 +1871,7 @@ def _launch_tool(
     region: str | None = None,
     openai_api_url: str | None = None,
     copilot_api_token: str | None = None,
+    copilot_debug: bool = False,
 ) -> None:
     """Common logic: start proxy, launch tool, clean up."""
     proxy_holder: list[subprocess.Popen | None] = [None]
@@ -1877,6 +1899,7 @@ def _launch_tool(
             region=region,
             openai_api_url=openai_api_url,
             copilot_api_token=copilot_api_token,
+            copilot_debug=copilot_debug,
         )
 
         if code_graph:
@@ -2426,6 +2449,14 @@ def unwrap_claude(
         "without requiring a provider API key."
     ),
 )
+@click.option(
+    "--debug-copilot",
+    is_flag=True,
+    help=(
+        "Print safe Copilot subscription routing diagnostics and enable proxy-side "
+        "upstream error logging."
+    ),
+)
 @click.option("--memory", is_flag=True, help="Enable persistent cross-session memory")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 @click.argument("copilot_args", nargs=-1, type=click.UNPROCESSED)
@@ -2439,6 +2470,7 @@ def copilot(
     provider_type: str,
     wire_api: str | None,
     subscription: bool,
+    debug_copilot: bool,
     memory: bool,
     verbose: bool,
     copilot_args: tuple[str, ...],
@@ -2510,17 +2542,25 @@ def copilot(
                 _inject_rtk_instructions(copilot_instructions, verbose=verbose)
 
     env = os.environ.copy()
+    debug_enabled = debug_copilot or copilot_debug_enabled()
+    if debug_enabled:
+        env["HEADROOM_COPILOT_DEBUG"] = "1"
     openai_api_url: str | None = None
     copilot_proxy_token: str | None = None
+    subscription_resolution = None
     if _should_use_copilot_oauth(
         backend=effective_backend,
         provider_type=provider_type,
         env=env,
         force_subscription=subscription,
     ):
-        client_bearer = (
-            resolve_subscription_bearer_token() if subscription else resolve_client_bearer_token()
-        )
+        if subscription:
+            subscription_resolution = resolve_subscription_bearer_token_details()
+            client_bearer = (
+                subscription_resolution.token if subscription_resolution is not None else None
+            )
+        else:
+            client_bearer = resolve_client_bearer_token()
         if not client_bearer:
             raise click.ClickException(
                 "GitHub Copilot subscription mode requires a reusable GitHub/Copilot bearer "
@@ -2560,10 +2600,40 @@ def copilot(
                 else "COPILOT_AUTH_MODE=github-oauth"
             ),
         ]
-        openai_api_url = resolve_copilot_api_url(client_bearer)
+        openai_api_url = (
+            subscription_resolution.api_url
+            if subscription_resolution is not None
+            else resolve_copilot_api_url(client_bearer)
+        )
         env["GITHUB_COPILOT_API_URL"] = openai_api_url
         env["OPENAI_TARGET_API_URL"] = openai_api_url
         env_vars_display.append(f"COPILOT_PROVIDER_API_URL={openai_api_url}")
+        if debug_enabled:
+            env_vars_display.extend(
+                [
+                    "HEADROOM_COPILOT_DEBUG=1",
+                    f"COPILOT_DEBUG_MODEL={_copilot_selected_model(copilot_args, env) or '(not set)'}",
+                    f"COPILOT_DEBUG_WIRE_API={effective_wire_api}",
+                    f"COPILOT_DEBUG_API_URL={openai_api_url}",
+                    (
+                        f"COPILOT_DEBUG_TOKEN_SOURCE={subscription_resolution.source}"
+                        if subscription_resolution is not None
+                        else "COPILOT_DEBUG_TOKEN_SOURCE=client-bearer"
+                    ),
+                    (
+                        f"COPILOT_DEBUG_TOKEN_CONFIDENCE={subscription_resolution.confidence}"
+                        if subscription_resolution is not None
+                        else "COPILOT_DEBUG_TOKEN_CONFIDENCE=unknown"
+                    ),
+                    (
+                        f"COPILOT_DEBUG_TOKEN_FINGERPRINT={subscription_resolution.token_fingerprint}"
+                        if subscription_resolution is not None
+                        else f"COPILOT_DEBUG_TOKEN_FINGERPRINT={token_fingerprint(client_bearer)}"
+                    ),
+                    "COPILOT_DEBUG_TOKEN_EXCHANGE=disabled",
+                    f"COPILOT_DEBUG_PROXY_LOG={_get_log_path()}",
+                ]
+            )
     else:
         env, env_vars_display = _build_copilot_launch_env(
             port=port,
@@ -2616,6 +2686,7 @@ def copilot(
         region=region,
         openai_api_url=openai_api_url,
         copilot_api_token=copilot_proxy_token,
+        copilot_debug=debug_enabled,
     )
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import hashlib
 import json
 import logging
 import os
@@ -77,6 +78,35 @@ class CopilotTokenCandidate:
     source: str
     confidence: str
     validate_for_subscription: bool = True
+
+
+@dataclass(frozen=True)
+class CopilotSubscriptionTokenResolution:
+    """A validated Copilot subscription token plus safe diagnostic metadata."""
+
+    token: str
+    source: str
+    confidence: str
+    api_url: str
+    token_fingerprint: str
+
+
+def copilot_debug_enabled() -> bool:
+    """Return whether opt-in Copilot subscription diagnostics are enabled."""
+
+    return os.environ.get("HEADROOM_COPILOT_DEBUG", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def token_fingerprint(token: str) -> str:
+    """Return a stable non-secret fingerprint for comparing token handoffs."""
+
+    digest = hashlib.sha256(token.encode("utf-8", errors="ignore")).hexdigest()
+    return f"sha256:{digest[:12]}"
 
 
 def _github_host() -> str:
@@ -425,26 +455,90 @@ def resolve_client_bearer_token() -> str | None:
     return read_cached_oauth_token()
 
 
-def resolve_subscription_bearer_token() -> str | None:
-    """Return the first discovered token that GitHub accepts for Copilot subscription APIs."""
+def _api_url_from_user_info(payload: dict[str, Any] | None) -> str:
+    endpoints = payload.get("endpoints") if isinstance(payload, dict) else None
+    api_url = endpoints.get("api") if isinstance(endpoints, dict) else None
+    if isinstance(api_url, str) and api_url.strip():
+        return api_url.strip()
+    return os.environ.get("GITHUB_COPILOT_API_URL", DEFAULT_API_URL).strip() or DEFAULT_API_URL
+
+
+def _subscription_resolution(
+    *,
+    token: str,
+    source: str,
+    confidence: str,
+    payload: dict[str, Any],
+) -> CopilotSubscriptionTokenResolution:
+    return CopilotSubscriptionTokenResolution(
+        token=token,
+        source=source,
+        confidence=confidence,
+        api_url=_api_url_from_user_info(payload),
+        token_fingerprint=token_fingerprint(token),
+    )
+
+
+def _log_token_provider_resolution(
+    *,
+    source: str,
+    token: str,
+    api_url: str,
+    token_exchange: str,
+) -> None:
+    if not copilot_debug_enabled():
+        return
+    logger.info(
+        "event=copilot_debug_token_provider source=%s token_fingerprint=%s "
+        "api_url=%s token_exchange=%s",
+        source,
+        token_fingerprint(token),
+        api_url,
+        token_exchange,
+    )
+
+
+def resolve_subscription_bearer_token_details() -> CopilotSubscriptionTokenResolution | None:
+    """Return the first Copilot subscription token plus safe diagnostic metadata."""
 
     for env_var in _API_TOKEN_ENV_VARS:
         token = os.environ.get(env_var, "").strip()
-        if token and _fetch_copilot_user_info(token) is not None:
-            return token
+        if not token:
+            continue
+        payload = _fetch_copilot_user_info(token)
+        if payload is not None:
+            return _subscription_resolution(
+                token=token,
+                source=f"env:{env_var}",
+                confidence="explicit-api-token",
+                payload=payload,
+            )
 
     for candidate in iter_oauth_token_candidates():
         if not candidate.validate_for_subscription:
             continue
-        if _fetch_copilot_user_info(candidate.token) is not None:
+        payload = _fetch_copilot_user_info(candidate.token)
+        if payload is not None:
             logger.debug(
                 "Using Copilot subscription token from %s (%s)",
                 candidate.source,
                 candidate.confidence,
             )
-            return candidate.token
+            return _subscription_resolution(
+                token=candidate.token,
+                source=candidate.source,
+                confidence=candidate.confidence,
+                payload=payload,
+            )
 
     return None
+
+
+def resolve_subscription_bearer_token() -> str | None:
+    """Return the first discovered token that GitHub accepts for Copilot subscription APIs."""
+
+    resolution = resolve_subscription_bearer_token_details()
+    return resolution.token if resolution is not None else None
 
 
 def has_oauth_auth() -> bool:
@@ -484,11 +578,7 @@ def resolve_copilot_api_url(oauth_token: str | None = None) -> str:
     if payload is None:
         return os.environ.get("GITHUB_COPILOT_API_URL", DEFAULT_API_URL).strip() or DEFAULT_API_URL
 
-    endpoints = payload.get("endpoints") if isinstance(payload, dict) else None
-    api_url = endpoints.get("api") if isinstance(endpoints, dict) else None
-    if isinstance(api_url, str) and api_url.strip():
-        return api_url.strip()
-    return os.environ.get("GITHUB_COPILOT_API_URL", DEFAULT_API_URL).strip() or DEFAULT_API_URL
+    return _api_url_from_user_info(payload)
 
 
 def _fetch_copilot_user_info(token: str) -> dict[str, Any] | None:
@@ -506,6 +596,21 @@ def _fetch_copilot_user_info(token: str) -> dict[str, Any] | None:
     try:
         with urllib_request.urlopen(request, timeout=10.0) as response:
             payload = json.loads(response.read().decode("utf-8"))
+    except urllib_error.HTTPError as exc:
+        if copilot_debug_enabled():
+            try:
+                preview = exc.read(1000).decode("utf-8", errors="replace").strip()
+            except Exception as body_exc:
+                preview = f"<unreadable response body: {type(body_exc).__name__}>"
+            logger.info(
+                "event=copilot_debug_user_info_failed url=%s status_code=%s error_preview=%s",
+                _user_info_url(),
+                exc.code,
+                preview,
+            )
+        else:
+            logger.debug("Unable to resolve Copilot API URL from user info: %s", exc)
+        return None
     except Exception as exc:
         logger.debug("Unable to resolve Copilot API URL from user info: %s", exc)
         return None
@@ -523,11 +628,20 @@ class CopilotTokenProvider:
     async def get_api_token(self) -> CopilotAPIToken:
         explicit_api_token = os.environ.get("GITHUB_COPILOT_API_TOKEN", "").strip()
         if explicit_api_token:
+            api_url = (
+                os.environ.get("GITHUB_COPILOT_API_URL", DEFAULT_API_URL).strip()
+                or DEFAULT_API_URL
+            )
+            _log_token_provider_resolution(
+                source="env:GITHUB_COPILOT_API_TOKEN",
+                token=explicit_api_token,
+                api_url=api_url,
+                token_exchange="disabled",
+            )
             return CopilotAPIToken(
                 token=explicit_api_token,
                 expires_at=time.time() + 3600,
-                api_url=os.environ.get("GITHUB_COPILOT_API_URL", DEFAULT_API_URL).strip()
-                or DEFAULT_API_URL,
+                api_url=api_url,
             )
 
         cached = self._cached
@@ -544,16 +658,31 @@ class CopilotTokenProvider:
                 raise RuntimeError("No GitHub Copilot OAuth token is available.")
 
             if not _should_exchange_oauth_token():
+                api_url = (
+                    os.environ.get("GITHUB_COPILOT_API_URL", DEFAULT_API_URL).strip()
+                    or DEFAULT_API_URL
+                )
+                _log_token_provider_resolution(
+                    source="oauth-direct",
+                    token=oauth_token,
+                    api_url=api_url,
+                    token_exchange="disabled",
+                )
                 direct_token = CopilotAPIToken(
                     token=oauth_token,
                     expires_at=time.time() + 3600,
-                    api_url=os.environ.get("GITHUB_COPILOT_API_URL", DEFAULT_API_URL).strip()
-                    or DEFAULT_API_URL,
+                    api_url=api_url,
                 )
                 self._cached = direct_token
                 return direct_token
 
             exchanged = await self._exchange_token(oauth_token)
+            _log_token_provider_resolution(
+                source="github-token-exchange",
+                token=exchanged.token,
+                api_url=exchanged.api_url,
+                token_exchange="enabled",
+            )
             self._cached = exchanged
             return exchanged
 
