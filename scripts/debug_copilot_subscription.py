@@ -275,8 +275,28 @@ def read_opencode_auth_candidates() -> list[TokenCandidate]:
     return candidates
 
 
+def read_headroom_auth_candidates() -> list[TokenCandidate]:
+    explicit = os.environ.get("HEADROOM_COPILOT_AUTH_FILE", "").strip()
+    path = Path(explicit).expanduser() if explicit else Path.home() / ".headroom" / "copilot_auth.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    except Exception as exc:
+        print(f"warn: could not read Headroom Copilot auth file {path}: {exc}", file=sys.stderr)
+        return []
+    if not isinstance(payload, dict) or payload.get("type") != "oauth":
+        return []
+    token = str(payload.get("refresh") or "").strip()
+    if not token:
+        return []
+    domain = str(payload.get("domain") or "").strip() or None
+    return [TokenCandidate(token=token, source=f"headroom:{path}", enterprise_url=domain)]
+
+
 def token_candidates(*, allow_secret_store: bool) -> list[TokenCandidate]:
     candidates: list[TokenCandidate] = []
+    candidates.extend(read_headroom_auth_candidates())
     for env_var in (*API_TOKEN_ENV_VARS, *OAUTH_TOKEN_ENV_VARS):
         token = os.environ.get(env_var, "").strip()
         if token:

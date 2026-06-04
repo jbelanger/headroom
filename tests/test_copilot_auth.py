@@ -13,9 +13,13 @@ from headroom import copilot_auth
 
 
 @pytest.fixture(autouse=True)
-def _block_real_copilot_secret_stores(monkeypatch: pytest.MonkeyPatch) -> None:
+def _block_real_copilot_secret_stores(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     """Keep unit tests from touching Keychain or Secret Service."""
 
+    monkeypatch.setenv("HEADROOM_COPILOT_AUTH_FILE", str(tmp_path / "copilot_auth.json"))
     monkeypatch.setattr(copilot_auth, "read_macos_keychain_token", lambda *, host: None)
     monkeypatch.setattr(copilot_auth, "read_linux_secret_token", lambda *, host: None)
 
@@ -23,6 +27,15 @@ def _block_real_copilot_secret_stores(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_read_cached_oauth_token_prefers_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GITHUB_COPILOT_TOKEN", "gho-env")
     assert copilot_auth.read_cached_oauth_token() == "gho-env"
+
+
+def test_read_cached_oauth_token_prefers_headroom_copilot_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_COPILOT_TOKEN", "gho-env")
+    copilot_auth.save_headroom_copilot_oauth_token("gho-headroom")
+
+    assert copilot_auth.read_cached_oauth_token() == "gho-headroom"
 
 
 def test_read_cached_oauth_token_prefers_copilot_cli_before_generic_github_token(

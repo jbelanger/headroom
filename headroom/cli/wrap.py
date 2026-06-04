@@ -2626,7 +2626,7 @@ def copilot(
         if not client_bearer:
             raise click.ClickException(
                 "GitHub Copilot subscription mode requires a reusable GitHub/Copilot bearer "
-                "token, but none could be resolved. Run `copilot auth login` first, or set "
+                "token, but none could be resolved. Run `headroom copilot-auth login` first, or set "
                 "GITHUB_COPILOT_TOKEN / GITHUB_COPILOT_GITHUB_TOKEN."
             )
 
@@ -3255,7 +3255,7 @@ def opencode(
             opencode_hint = (
                 "Run OpenCode's GitHub Copilot login first"
                 if auth_source == "opencode"
-                else "Run OpenCode's GitHub Copilot login or `copilot auth login` first"
+                else "Run OpenCode's GitHub Copilot login or `headroom copilot-auth login` first"
             )
             raise click.ClickException(
                 "OpenCode subscription mode requires a reusable GitHub/Copilot bearer "

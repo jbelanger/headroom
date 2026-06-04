@@ -141,10 +141,16 @@ Any OpenAI-compatible client works via `headroom proxy`. MCP-native: `headroom m
 Headroom can route GitHub Copilot CLI subscription traffic through the local proxy:
 
 ```bash
+headroom copilot-auth login
 headroom wrap copilot --subscription -- --model gpt-4o
 ```
 
 This lets Headroom intercept OpenAI-compatible Copilot CLI requests and apply the same proxy compression pipeline before forwarding to GitHub Copilot's hosted API. The wrapper exchanges the reusable GitHub OAuth token for Copilot's short-lived API token using the Copilot Chat headers, resolves the account-specific Copilot API endpoint, and prints it as `COPILOT_PROVIDER_API_URL=...` during launch.
+
+`headroom copilot-auth login` uses the same GitHub Copilot Chat device-code
+OAuth flow as the OpenCode Copilot auth plugin. This is preferred over reusing
+generic GitHub CLI or Copilot CLI tokens because GitHub's Copilot token-exchange
+endpoint does not accept every token that can read `/copilot_internal/user`.
 
 For GitHub Enterprise Server or custom-domain Copilot deployments, set the
 deployment domain before launching:

@@ -19,6 +19,7 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 from urllib.parse import urlparse
 
+from headroom import paths
 from headroom.copilot_linux_secret import read_copilot_oauth_token as read_linux_secret_token
 from headroom.copilot_macos_keychain import read_copilot_oauth_token as read_macos_keychain_token
 
@@ -28,6 +29,7 @@ DEFAULT_API_URL = "https://api.githubcopilot.com"
 DEFAULT_TOKEN_EXCHANGE_URL = "https://api.github.com/copilot_internal/v2/token"
 DEFAULT_USER_INFO_URL = "https://api.github.com/copilot_internal/user"
 DEFAULT_GITHUB_HOST = "github.com"
+COPILOT_CHAT_OAUTH_CLIENT_ID = "Iv1.b507a08c87ecfe98"
 _TOKEN_EXPIRY_BUFFER_S = 60
 _DEFAULT_EDITOR_VERSION = "vscode/1.107.0"
 _DEFAULT_USER_AGENT = "GitHubCopilotChat/0.35.0"
@@ -56,6 +58,7 @@ _OAUTH_TOKEN_KEYS = (
     "accessToken",
 )
 _EXPIRY_KEYS = ("expires_at", "expiresAt", "expiry", "expires")
+_DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 
 
 @dataclass(frozen=True)
@@ -114,6 +117,30 @@ def token_fingerprint(token: str) -> str:
 
 def _github_host() -> str:
     return (os.environ.get("GITHUB_COPILOT_HOST") or DEFAULT_GITHUB_HOST).strip().lower()
+
+
+def headroom_copilot_auth_path() -> Path:
+    override = os.environ.get("HEADROOM_COPILOT_AUTH_FILE", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return paths.workspace_dir() / "copilot_auth.json"
+
+
+def _github_oauth_domain(domain: str | None = None) -> str:
+    raw = (domain or DEFAULT_GITHUB_HOST).strip()
+    if not raw:
+        return DEFAULT_GITHUB_HOST
+    normalized = normalize_copilot_enterprise_url(raw)
+    host = _enterprise_hostname(normalized)
+    return host or DEFAULT_GITHUB_HOST
+
+
+def _github_oauth_urls(domain: str) -> dict[str, str]:
+    normalized = _github_oauth_domain(domain)
+    return {
+        "device_code": f"https://{normalized}/login/device/code",
+        "access_token": f"https://{normalized}/login/oauth/access_token",
+    }
 
 
 def _token_exchange_url() -> str:
@@ -301,6 +328,145 @@ def _entry_expired(entry: dict[str, Any]) -> bool:
     return False
 
 
+def read_headroom_copilot_oauth_token() -> str | None:
+    """Return Headroom's own Copilot Chat OAuth token, if one was saved."""
+
+    try:
+        payload = json.loads(headroom_copilot_auth_path().read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        logger.debug("Unable to read Headroom Copilot auth file: %s", exc)
+        return None
+
+    if not isinstance(payload, dict) or payload.get("type") != "oauth":
+        return None
+    token = payload.get("refresh")
+    return token.strip() if isinstance(token, str) and token.strip() else None
+
+
+def save_headroom_copilot_oauth_token(
+    token: str,
+    *,
+    domain: str = DEFAULT_GITHUB_HOST,
+) -> Path:
+    """Persist the Copilot Chat OAuth token returned by GitHub device login."""
+
+    token = token.strip()
+    if not token:
+        raise ValueError("Copilot OAuth token must not be empty.")
+
+    path = headroom_copilot_auth_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body: dict[str, Any] = {
+        "type": "oauth",
+        "provider": "github-copilot",
+        "refresh": token,
+        "access": "",
+        "expires": 0,
+        "domain": _github_oauth_domain(domain),
+        "created_at": int(time.time()),
+    }
+    path.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return path
+
+
+def start_copilot_device_authorization(
+    *,
+    domain: str = DEFAULT_GITHUB_HOST,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Start the Copilot Chat OAuth device-code flow."""
+
+    urls = _github_oauth_urls(domain)
+    body = json.dumps(
+        {
+            "client_id": COPILOT_CHAT_OAUTH_CLIENT_ID,
+            "scope": "read:user",
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    request = urllib_request.Request(
+        urls["device_code"],
+        data=body,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": _DEFAULT_USER_AGENT,
+        },
+        method="POST",
+    )
+    with urllib_request.urlopen(request, timeout=timeout) as response:
+        payload = json.loads(response.read().decode("utf-8", errors="replace"))
+    if not isinstance(payload, dict):
+        raise RuntimeError("GitHub device authorization returned an invalid response.")
+    return payload
+
+
+def poll_copilot_device_authorization(
+    device_code: str,
+    *,
+    domain: str = DEFAULT_GITHUB_HOST,
+    interval: int = 5,
+    expires_in: int = 900,
+    timeout: float = 10.0,
+) -> str:
+    """Poll GitHub until the device-code OAuth flow returns an access token."""
+
+    urls = _github_oauth_urls(domain)
+    deadline = time.time() + max(1, expires_in)
+    poll_interval = max(1, interval)
+    while time.time() < deadline:
+        body = json.dumps(
+            {
+                "client_id": COPILOT_CHAT_OAUTH_CLIENT_ID,
+                "device_code": device_code,
+                "grant_type": _DEVICE_CODE_GRANT_TYPE,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        request = urllib_request.Request(
+            urls["access_token"],
+            data=body,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "User-Agent": _DEFAULT_USER_AGENT,
+            },
+            method="POST",
+        )
+        with urllib_request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="replace"))
+        if not isinstance(payload, dict):
+            raise RuntimeError("GitHub device authorization returned an invalid response.")
+
+        access_token = payload.get("access_token")
+        if isinstance(access_token, str) and access_token.strip():
+            return access_token.strip()
+
+        error = str(payload.get("error") or "").strip()
+        if error == "authorization_pending":
+            time.sleep(poll_interval)
+            continue
+        if error == "slow_down":
+            poll_interval += 5
+            time.sleep(poll_interval)
+            continue
+        if error == "expired_token":
+            raise RuntimeError("GitHub device authorization expired.")
+        if error:
+            description = str(payload.get("error_description") or error).strip()
+            raise RuntimeError(f"GitHub device authorization failed: {description}")
+
+        time.sleep(poll_interval)
+
+    raise RuntimeError("GitHub device authorization expired.")
+
+
 def _extract_oauth_token(entry: dict[str, Any]) -> str | None:
     if _entry_expired(entry):
         return None
@@ -345,6 +511,16 @@ def iter_oauth_token_candidates() -> list[CopilotTokenCandidate]:
     """Return reusable token candidates in safest-first discovery order."""
 
     candidates: list[CopilotTokenCandidate] = []
+
+    headroom_copilot_token = read_headroom_copilot_oauth_token()
+    if headroom_copilot_token:
+        candidates.append(
+            CopilotTokenCandidate(
+                token=headroom_copilot_token,
+                source=f"headroom-copilot-auth:{headroom_copilot_auth_path()}",
+                confidence="copilot-chat-oauth",
+            )
+        )
 
     for env_var in _COPILOT_OAUTH_TOKEN_ENV_VARS:
         token = os.environ.get(env_var, "").strip()
