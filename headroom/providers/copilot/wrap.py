@@ -11,6 +11,8 @@ from typing import Any
 
 import click
 
+_RESPONSES_WIRE_MODEL_PREFIXES = ("gpt-5",)
+
 
 def resolve_provider_type(
     backend: str | None, provider_type: str, environ: Mapping[str, str] | None = None
@@ -65,6 +67,47 @@ def validate_configuration(
         )
 
 
+def selected_model(copilot_args: tuple[str, ...], env: Mapping[str, str]) -> str | None:
+    """Return the Copilot model configured via env or CLI args, if any."""
+    for env_var in ("COPILOT_MODEL", "COPILOT_PROVIDER_MODEL_ID"):
+        model = env.get(env_var, "").strip()
+        if model:
+            return model
+
+    for idx, arg in enumerate(copilot_args):
+        if arg == "--model" and idx + 1 < len(copilot_args):
+            model = copilot_args[idx + 1].strip()
+            return model or None
+        if arg.startswith("--model="):
+            model = arg.split("=", 1)[1].strip()
+            return model or None
+
+    return None
+
+
+def model_prefers_responses_wire_api(model: str | None) -> bool:
+    """Return True when Copilot should use OpenAI Responses for this model."""
+    if not model:
+        return False
+    normalized = model.strip().lower().rsplit("/", 1)[-1]
+    return normalized.startswith(_RESPONSES_WIRE_MODEL_PREFIXES)
+
+
+def resolve_wire_api(
+    *,
+    wire_api: str | None,
+    copilot_args: tuple[str, ...],
+    env: Mapping[str, str],
+    infer_from_model: bool,
+) -> str:
+    """Resolve the OpenAI-compatible wire API for Copilot provider override."""
+    if wire_api is not None:
+        return wire_api
+    if infer_from_model and model_prefers_responses_wire_api(selected_model(copilot_args, env)):
+        return "responses"
+    return "completions"
+
+
 def provider_key_source(provider_type: str) -> str:
     """Return the preferred provider key variable for the selected provider type."""
     return "ANTHROPIC_API_KEY" if provider_type == "anthropic" else "OPENAI_API_KEY"
@@ -112,13 +155,4 @@ def build_launch_env(
 
 def model_configured(copilot_args: tuple[str, ...], env: Mapping[str, str]) -> bool:
     """Return True when Copilot BYOK model selection is configured."""
-    if env.get("COPILOT_MODEL") or env.get("COPILOT_PROVIDER_MODEL_ID"):
-        return True
-
-    for idx, arg in enumerate(copilot_args):
-        if arg == "--model" and idx + 1 < len(copilot_args):
-            return True
-        if arg.startswith("--model="):
-            return True
-
-    return False
+    return selected_model(copilot_args, env) is not None

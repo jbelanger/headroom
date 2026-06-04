@@ -65,6 +65,9 @@ from headroom.providers.copilot import (
     resolve_provider_type as _copilot_resolve_provider_type,
 )
 from headroom.providers.copilot import (
+    resolve_wire_api as _copilot_resolve_wire_api,
+)
+from headroom.providers.copilot import (
     validate_configuration as _validate_copilot_configuration,
 )
 from headroom.providers.cursor import render_setup_lines as _render_cursor_setup_lines
@@ -1572,6 +1575,22 @@ def _copilot_model_configured(copilot_args: tuple[str, ...], env: dict[str, str]
     return _copilot_model_configured_impl(copilot_args, env)
 
 
+def _resolve_copilot_wire_api(
+    *,
+    wire_api: str | None,
+    copilot_args: tuple[str, ...],
+    env: dict[str, str],
+    backend: str | None,
+) -> str:
+    """Resolve Copilot's OpenAI-compatible wire API for direct provider routing."""
+    return _copilot_resolve_wire_api(
+        wire_api=wire_api,
+        copilot_args=copilot_args,
+        env=env,
+        infer_from_model=backend in (None, "", "anthropic"),
+    )
+
+
 def _should_use_copilot_oauth(
     *,
     backend: str | None,
@@ -2460,6 +2479,8 @@ def copilot(
         effective_backend = running_backend or effective_backend
 
     effective_provider_type = _resolve_copilot_provider_type(effective_backend, provider_type)
+    if subscription and provider_type == "auto":
+        effective_provider_type = "openai"
     _validate_copilot_configuration(
         provider_type=effective_provider_type,
         wire_api=wire_api,
@@ -2507,7 +2528,12 @@ def copilot(
                 "GITHUB_COPILOT_TOKEN / GITHUB_COPILOT_GITHUB_TOKEN."
             )
 
-        effective_wire_api = wire_api or "completions"
+        effective_wire_api = _resolve_copilot_wire_api(
+            wire_api=wire_api,
+            copilot_args=copilot_args,
+            env=env,
+            backend=effective_backend,
+        )
         env["COPILOT_PROVIDER_TYPE"] = "openai"
         env["COPILOT_PROVIDER_BASE_URL"] = f"http://127.0.0.1:{port}/v1"
         env["COPILOT_PROVIDER_WIRE_API"] = effective_wire_api
@@ -2542,7 +2568,16 @@ def copilot(
         env, env_vars_display = _build_copilot_launch_env(
             port=port,
             provider_type=effective_provider_type,
-            wire_api=wire_api,
+            wire_api=(
+                _resolve_copilot_wire_api(
+                    wire_api=wire_api,
+                    copilot_args=copilot_args,
+                    env=env,
+                    backend=effective_backend,
+                )
+                if effective_provider_type == "openai"
+                else wire_api
+            ),
             environ=env,
         )
 

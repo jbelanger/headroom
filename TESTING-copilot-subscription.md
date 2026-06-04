@@ -59,6 +59,13 @@ pipx install --pip-args='--pre' headroom-ai     # or: pip install --pre headroom
 headroom wrap copilot --subscription -- --model gpt-4o -p "Reply with exactly: HEADROOM_OK"
 ```
 
+For GPT-5-family Copilot models, Headroom now selects Copilot's Responses wire
+API automatically:
+
+```bash
+headroom wrap copilot --subscription -- --model gpt-5.4 -p "Reply with exactly: HEADROOM_OK"
+```
+
 - **If it prints `HEADROOM_OK`** → auto-discovery works on your Linux. 🎉 Report success.
 - **If it errors with "no reusable bearer token"** → discovery missed your token. Please grab the **schema** so we can fix it (redact the secret), then confirm the mechanism works via the env var:
   ```bash

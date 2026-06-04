@@ -256,6 +256,76 @@ def test_wrap_copilot_subscription_uses_github_auth_without_provider_key(
     assert captured["openai_api_url"] == DEFAULT_API_URL
 
 
+def test_wrap_copilot_subscription_uses_responses_for_gpt5_models(
+    runner: CliRunner,
+    wrap_modules: tuple[types.ModuleType, click.Group],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _wrap_cli, main = wrap_modules
+    for var in ("COPILOT_PROVIDER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    captured: dict[str, object] = {}
+
+    def fake_launch_tool(**kwargs):  # noqa: ANN003
+        captured.update(kwargs)
+
+    with (
+        patch("headroom.cli.wrap.shutil.which", return_value="copilot"),
+        patch("headroom.cli.wrap.resolve_subscription_bearer_token", return_value="gho-existing"),
+        patch("headroom.cli.wrap.has_oauth_auth", return_value=False),
+        patch("headroom.cli.wrap._launch_tool", side_effect=fake_launch_tool),
+    ):
+        result = runner.invoke(
+            main,
+            ["wrap", "copilot", "--subscription", "--no-rtk", "--", "--model", "gpt-5.4"],
+        )
+
+    assert result.exit_code == 0, result.output
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["COPILOT_PROVIDER_TYPE"] == "openai"
+    assert env["COPILOT_PROVIDER_WIRE_API"] == "responses"
+    assert captured["args"] == ("--model", "gpt-5.4")
+
+
+def test_wrap_copilot_subscription_honors_explicit_wire_api_for_gpt5_models(
+    runner: CliRunner,
+    wrap_modules: tuple[types.ModuleType, click.Group],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _wrap_cli, main = wrap_modules
+    captured: dict[str, object] = {}
+
+    def fake_launch_tool(**kwargs):  # noqa: ANN003
+        captured.update(kwargs)
+
+    with (
+        patch("headroom.cli.wrap.shutil.which", return_value="copilot"),
+        patch("headroom.cli.wrap.resolve_subscription_bearer_token", return_value="gho-existing"),
+        patch("headroom.cli.wrap.has_oauth_auth", return_value=False),
+        patch("headroom.cli.wrap._launch_tool", side_effect=fake_launch_tool),
+    ):
+        result = runner.invoke(
+            main,
+            [
+                "wrap",
+                "copilot",
+                "--subscription",
+                "--no-rtk",
+                "--wire-api",
+                "completions",
+                "--",
+                "--model",
+                "gpt-5.4",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["COPILOT_PROVIDER_WIRE_API"] == "completions"
+
+
 def test_wrap_copilot_subscription_pins_validated_token_for_proxy(
     runner: CliRunner,
     wrap_modules: tuple[types.ModuleType, click.Group],

@@ -7,6 +7,7 @@ from .wrap import (
     provider_key_source,
     query_proxy_config,
     resolve_provider_type,
+    resolve_wire_api,
     validate_configuration,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "provider_key_source",
     "query_proxy_config",
     "resolve_provider_type",
+    "resolve_wire_api",
     "validate_configuration",
 ]

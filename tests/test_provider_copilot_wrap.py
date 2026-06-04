@@ -15,6 +15,7 @@ from headroom.providers.copilot.wrap import (
     provider_key_source,
     query_proxy_config,
     resolve_provider_type,
+    resolve_wire_api,
     validate_configuration,
 )
 
@@ -122,3 +123,63 @@ def test_model_configured_detects_env_and_cli_variants() -> None:
     assert model_configured(("--model", "gpt-4o"), {}) is True
     assert model_configured(("--model=gpt-4o",), {}) is True
     assert model_configured(("--other", "value"), {}) is False
+
+
+def test_resolve_wire_api_infers_responses_for_gpt5_models() -> None:
+    assert (
+        resolve_wire_api(
+            wire_api=None,
+            copilot_args=("--model", "gpt-5.4"),
+            env={},
+            infer_from_model=True,
+        )
+        == "responses"
+    )
+    assert (
+        resolve_wire_api(
+            wire_api=None,
+            copilot_args=("--model=GPT-5.4-High",),
+            env={},
+            infer_from_model=True,
+        )
+        == "responses"
+    )
+    assert (
+        resolve_wire_api(
+            wire_api=None,
+            copilot_args=(),
+            env={"COPILOT_MODEL": "openai/gpt-5.4"},
+            infer_from_model=True,
+        )
+        == "responses"
+    )
+
+
+def test_resolve_wire_api_keeps_explicit_or_non_gpt5_completions() -> None:
+    assert (
+        resolve_wire_api(
+            wire_api="completions",
+            copilot_args=("--model", "gpt-5.4"),
+            env={},
+            infer_from_model=True,
+        )
+        == "completions"
+    )
+    assert (
+        resolve_wire_api(
+            wire_api=None,
+            copilot_args=("--model", "gpt-4o"),
+            env={},
+            infer_from_model=True,
+        )
+        == "completions"
+    )
+    assert (
+        resolve_wire_api(
+            wire_api=None,
+            copilot_args=("--model", "gpt-5.4"),
+            env={},
+            infer_from_model=False,
+        )
+        == "completions"
+    )
