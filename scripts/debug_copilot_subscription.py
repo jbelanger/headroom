@@ -382,6 +382,36 @@ def model_summary(models_payload: Any, model: str) -> dict[str, Any] | None:
     }
 
 
+def model_catalog_summary(models_payload: Any, *, limit: int = 30) -> dict[str, Any] | None:
+    if not isinstance(models_payload, dict):
+        return None
+    data = models_payload.get("data")
+    if not isinstance(data, list):
+        return None
+
+    models: list[dict[str, Any]] = []
+    for item in data[:limit]:
+        if not isinstance(item, dict):
+            continue
+        policy = item.get("policy") if isinstance(item.get("policy"), dict) else {}
+        models.append(
+            {
+                "id": item.get("id"),
+                "name": item.get("name"),
+                "model_picker_enabled": item.get("model_picker_enabled"),
+                "supported_endpoints": item.get("supported_endpoints"),
+                "policy_state": policy.get("state"),
+            }
+        )
+
+    return {
+        "total_models": len(data),
+        "shown": len(models),
+        "truncated": len(data) > limit,
+        "models": models,
+    }
+
+
 def user_info_api_url(payload: Any) -> str | None:
     if not isinstance(payload, dict):
         return None
@@ -478,6 +508,12 @@ def run() -> int:
     base_candidates = [
         *args.base_url,
         os.environ.get("GITHUB_COPILOT_API_URL", ""),
+        opencode_copilot_base(os.environ.get("GITHUB_COPILOT_ENTERPRISE_URL", "").strip())
+        if os.environ.get("GITHUB_COPILOT_ENTERPRISE_URL", "").strip()
+        else "",
+        opencode_copilot_base(os.environ.get("GITHUB_COPILOT_ENTERPRISE_DOMAIN", "").strip())
+        if os.environ.get("GITHUB_COPILOT_ENTERPRISE_DOMAIN", "").strip()
+        else "",
         DEFAULT_API_URL,
         DEFAULT_BUSINESS_API_URL,
         *[opencode_copilot_base(candidate.enterprise_url) for candidate in candidates],
@@ -564,6 +600,7 @@ def run() -> int:
                     tokens=candidates,
                 )
                 summary = model_summary(models.json_body, args.model)
+                catalog = model_catalog_summary(models.json_body)
                 report["probes"].append(
                     {
                         "kind": "models",
@@ -573,6 +610,7 @@ def run() -> int:
                         "status": models.status,
                         "ok": models.ok,
                         "model": summary,
+                        "catalog": catalog,
                         "headers": models.headers,
                         "error_preview": None if models.ok else models.text,
                     }
@@ -581,6 +619,8 @@ def run() -> int:
                     print_http_result(f"models header_style={style}", models)
                     if summary is not None:
                         print(f"  model_summary={json.dumps(summary, sort_keys=True)}")
+                    if catalog is not None:
+                        print(f"  model_catalog={json.dumps(catalog, sort_keys=True)}")
 
                 if not args.probe_generation:
                     continue

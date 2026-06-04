@@ -263,6 +263,71 @@ class TestStreamingRatelimitHeaderForwarding:
         mock_response.aclose.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_copilot_debug_logs_streaming_error_body(self, monkeypatch):
+        """Opt-in Copilot debug logs should include safe streaming error previews."""
+        proxy = self._create_mock_proxy()
+        mock_response = self._create_mock_upstream_response()
+        mock_response.status_code = 400
+        mock_response.headers = httpx.Headers(
+            {
+                "content-type": "application/json",
+                "x-github-request-id": "gh-req-123",
+                "authorization": "Bearer should-not-log",
+            }
+        )
+        mock_response.aread = AsyncMock(
+            return_value=b'{"error":{"message":"The requested model is not supported."}}'
+        )
+        mock_response.aclose = AsyncMock()
+
+        async def fake_apply_copilot_api_auth(headers, *, url):  # noqa: ANN001
+            return dict(headers)
+
+        mock_request = MagicMock()
+        proxy.http_client.build_request = MagicMock(return_value=mock_request)
+        proxy.http_client.send = AsyncMock(return_value=mock_response)
+        fake_logger = MagicMock()
+        monkeypatch.setenv("HEADROOM_COPILOT_DEBUG", "1")
+        monkeypatch.setenv("GITHUB_COPILOT_API_URL", "https://api.business.githubcopilot.com")
+        monkeypatch.setattr(streaming_module, "apply_copilot_api_auth", fake_apply_copilot_api_auth)
+        monkeypatch.setattr(streaming_module, "logger", fake_logger)
+
+        result = await proxy._stream_response(
+            url="https://api.business.githubcopilot.com/responses",
+            headers={"Authorization": "Bearer gho-test"},
+            body={
+                "model": "gpt-5.4",
+                "input": "hi",
+                "stream": True,
+            },
+            provider="openai",
+            model="gpt-5.4",
+            request_id="test-copilot-debug-error",
+            original_tokens=10,
+            optimized_tokens=10,
+            tokens_saved=0,
+            transforms_applied=[],
+            tags={},
+            optimization_latency=0.0,
+        )
+
+        assert result.status_code == 400
+        assert result.body == b'{"error":{"message":"The requested model is not supported."}}'
+        debug_calls = [
+            call
+            for call in fake_logger.info.call_args_list
+            if call.args and "event=copilot_debug_response" in call.args[0]
+        ]
+        assert debug_calls
+        debug_call = debug_calls[-1]
+        assert debug_call.args[2] == "/v1/responses"
+        assert debug_call.args[4] == "gpt-5.4"
+        assert debug_call.args[5] == 400
+        assert "The requested model is not supported." in debug_call.args[7]
+        assert "should-not-log" not in repr(debug_call)
+        mock_response.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_upstream_http_error_closes_response_when_body_read_fails(self, monkeypatch):
         """Reading a streaming error body should still close the upstream response."""
         proxy = self._create_mock_proxy()

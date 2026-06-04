@@ -131,5 +131,3 @@ generation /v1/chat/completions header_style=copilot-cli: status=404 elapsed_ms=
   headers={"Content-Type": "text/plain; charset=utf-8", "X-GitHub-Request-Id": "75EA:2766A7:3723D16:3A3C586:6A219DEB"}
   error=HTTP Error 404: Not Found
   error_preview=404 page not found
-
-  gho_FF6awIHNTi0ngpqBTYMjOapQyKqjZn29Y

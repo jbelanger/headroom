@@ -37,6 +37,10 @@ def _subscription_token_resolution(
     )
 
 
+def _model_catalog(*model_ids: str) -> list[dict[str, object]]:
+    return [{"id": model_id} for model_id in model_ids]
+
+
 @pytest.fixture
 def wrap_modules(monkeypatch: pytest.MonkeyPatch) -> tuple[types.ModuleType, click.Group]:
     headroom_pkg = sys.modules.get("headroom")
@@ -255,6 +259,10 @@ def test_wrap_copilot_subscription_uses_github_auth_without_provider_key(
             "headroom.cli.wrap.resolve_subscription_bearer_token_details",
             return_value=_subscription_token_resolution(),
         ),
+        patch(
+            "headroom.cli.wrap.fetch_copilot_model_catalog",
+            return_value=_model_catalog("gpt-5.4"),
+        ),
         patch("headroom.cli.wrap.has_oauth_auth", return_value=False),
         patch("headroom.cli.wrap._launch_tool", side_effect=fake_launch_tool),
     ):
@@ -294,6 +302,10 @@ def test_wrap_copilot_subscription_uses_responses_for_gpt5_models(
             "headroom.cli.wrap.resolve_subscription_bearer_token_details",
             return_value=_subscription_token_resolution(),
         ),
+        patch(
+            "headroom.cli.wrap.fetch_copilot_model_catalog",
+            return_value=_model_catalog("gpt-5.4"),
+        ),
         patch("headroom.cli.wrap.has_oauth_auth", return_value=False),
         patch("headroom.cli.wrap._launch_tool", side_effect=fake_launch_tool),
     ):
@@ -327,6 +339,10 @@ def test_wrap_copilot_subscription_honors_explicit_wire_api_for_gpt5_models(
             "headroom.cli.wrap.resolve_subscription_bearer_token_details",
             return_value=_subscription_token_resolution(),
         ),
+        patch(
+            "headroom.cli.wrap.fetch_copilot_model_catalog",
+            return_value=_model_catalog("gpt-5.4"),
+        ),
         patch("headroom.cli.wrap.has_oauth_auth", return_value=False),
         patch("headroom.cli.wrap._launch_tool", side_effect=fake_launch_tool),
     ):
@@ -349,6 +365,49 @@ def test_wrap_copilot_subscription_honors_explicit_wire_api_for_gpt5_models(
     env = captured["env"]
     assert isinstance(env, dict)
     assert env["COPILOT_PROVIDER_WIRE_API"] == "completions"
+
+
+def test_wrap_copilot_subscription_rejects_model_missing_from_catalog(
+    runner: CliRunner,
+    wrap_modules: tuple[types.ModuleType, click.Group],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _wrap_cli, main = wrap_modules
+    for var in ("COPILOT_PROVIDER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+
+    with (
+        patch("headroom.cli.wrap.shutil.which", return_value="copilot"),
+        patch(
+            "headroom.cli.wrap.resolve_subscription_bearer_token_details",
+            return_value=_subscription_token_resolution(
+                api_url="https://api.business.githubcopilot.com"
+            ),
+        ),
+        patch(
+            "headroom.cli.wrap.fetch_copilot_model_catalog",
+            return_value=_model_catalog(
+                "gpt-4o-mini-2024-07-18",
+                "gpt-4o-2024-11-20",
+                "gpt-4o-2024-08-06",
+                "gpt-3.5-turbo-0613",
+                "gpt-3.5-turbo",
+                "gpt-4o-mini",
+                "gpt-4o",
+            ),
+        ),
+        patch("headroom.cli.wrap.has_oauth_auth", return_value=False),
+        patch("headroom.cli.wrap._launch_tool") as launch_tool,
+    ):
+        result = runner.invoke(
+            main,
+            ["wrap", "copilot", "--subscription", "--no-rtk", "--", "--model", "gpt-5.4"],
+        )
+
+    assert result.exit_code != 0
+    assert "model 'gpt-5.4' is not available for this account" in result.output
+    assert "gpt-4o-mini-2024-07-18" in result.output
+    launch_tool.assert_not_called()
 
 
 def test_wrap_copilot_subscription_pins_validated_token_for_proxy(
@@ -403,6 +462,47 @@ def test_wrap_copilot_subscription_pins_validated_token_for_proxy(
     assert "gho-validated" not in result.output
 
 
+def test_start_proxy_forwards_copilot_api_url_to_proxy_env(
+    wrap_modules: tuple[types.ModuleType, click.Group],
+    tmp_path: Path,
+) -> None:
+    wrap_cli, _main = wrap_modules
+    business_api = "https://api.business.githubcopilot.com"
+    captured: dict[str, object] = {}
+
+    class FakePopen:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+
+        def poll(self) -> None:
+            return None
+
+    with (
+        patch.object(wrap_cli, "_get_log_path", return_value=tmp_path / "proxy.log"),
+        patch.object(wrap_cli, "_check_proxy", return_value=True),
+        patch.object(wrap_cli.subprocess, "Popen", FakePopen),
+        patch.object(wrap_cli.time, "sleep", lambda _seconds: None),
+    ):
+        proc = wrap_cli._start_proxy(
+            8787,
+            agent_type="copilot",
+            openai_api_url=business_api,
+            copilot_api_token="gho-validated",
+            copilot_debug=True,
+        )
+
+    assert isinstance(proc, FakePopen)
+    kwargs = captured["kwargs"]
+    assert isinstance(kwargs, dict)
+    env = kwargs["env"]
+    assert isinstance(env, dict)
+    assert env["OPENAI_TARGET_API_URL"] == business_api
+    assert env["GITHUB_COPILOT_API_URL"] == business_api
+    assert env["GITHUB_COPILOT_API_TOKEN"] == "gho-validated"
+    assert env["HEADROOM_COPILOT_DEBUG"] == "1"
+
+
 def test_wrap_copilot_debug_prints_safe_subscription_diagnostics(
     runner: CliRunner,
     wrap_modules: tuple[types.ModuleType, click.Group],
@@ -428,6 +528,10 @@ def test_wrap_copilot_debug_prints_safe_subscription_diagnostics(
                 source="windows-credential-manager:copilot-cli",
                 confidence="high",
             ),
+        ),
+        patch(
+            "headroom.cli.wrap.fetch_copilot_model_catalog",
+            return_value=_model_catalog("gpt-5.4"),
         ),
         patch("headroom.cli.wrap.has_oauth_auth", return_value=False),
         patch("headroom.cli.wrap._get_log_path", return_value=Path("/tmp/headroom/proxy.log")),

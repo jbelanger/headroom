@@ -10,10 +10,12 @@ import contextlib
 import json
 import logging
 import time
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from headroom.proxy.auth_mode import classify_client
-from headroom.proxy.helpers import jitter_delay_ms
+from headroom.proxy.helpers import jitter_delay_ms, redact_for_wire_debug
 
 if TYPE_CHECKING:
     from fastapi.responses import Response, StreamingResponse
@@ -21,9 +23,110 @@ if TYPE_CHECKING:
 
 import httpx
 
-from headroom.copilot_auth import apply_copilot_api_auth
+from headroom.copilot_auth import (
+    apply_copilot_api_auth,
+    copilot_debug_enabled,
+    is_copilot_api_url,
+)
 
 logger = logging.getLogger("headroom.proxy")
+
+_COPILOT_DEBUG_RESPONSE_PREVIEW_CHARS = 4000
+_COPILOT_DEBUG_HEADER_NAMES = {
+    "content-type",
+    "retry-after",
+    "x-request-id",
+    "x-github-request-id",
+    "x-copilot-request-id",
+    "cf-ray",
+}
+_COPILOT_DEBUG_HEADER_PREFIXES = (
+    "x-ratelimit-",
+    "x-copilot-",
+)
+
+
+def _copilot_debug_header_subset(headers: Mapping[str, Any]) -> dict[str, str]:
+    """Return non-secret upstream response headers useful for Copilot debugging."""
+
+    safe_headers: dict[str, str] = {}
+    for key, value in headers.items():
+        normalized = str(key).lower()
+        if normalized in _COPILOT_DEBUG_HEADER_NAMES or normalized.startswith(
+            _COPILOT_DEBUG_HEADER_PREFIXES
+        ):
+            safe_headers[str(key)] = str(value)
+    return safe_headers
+
+
+def _copilot_debug_endpoint_label(url: str) -> str:
+    path = urlparse(url).path or "unknown"
+    if path in {"/chat/completions", "/responses"}:
+        return f"/v1{path}"
+    return path
+
+
+def _copilot_debug_error_preview_from_bytes(error_content: bytes) -> str:
+    """Return a redacted, bounded upstream streaming error body preview."""
+
+    if not error_content:
+        return "<empty>"
+
+    try:
+        decoded = error_content.decode("utf-8")
+    except Exception:
+        decoded = error_content.decode("utf-8", errors="replace")
+
+    try:
+        payload: Any = json.loads(decoded)
+    except Exception:
+        payload = decoded
+
+    redacted = redact_for_wire_debug(payload)
+    try:
+        if isinstance(redacted, str):
+            preview = redacted
+        else:
+            preview = json.dumps(redacted, ensure_ascii=False, default=str, separators=(",", ":"))
+    except Exception:
+        preview = repr(redacted)
+
+    if len(preview) > _COPILOT_DEBUG_RESPONSE_PREVIEW_CHARS:
+        preview = preview[:_COPILOT_DEBUG_RESPONSE_PREVIEW_CHARS] + "...[truncated]"
+    return preview
+
+
+def _log_copilot_debug_streaming_error(
+    *,
+    request_id: str,
+    url: str,
+    model: str | None,
+    status_code: int,
+    headers: Mapping[str, Any],
+    error_content: bytes,
+) -> None:
+    """Log safe Copilot streaming response diagnostics when explicitly enabled."""
+
+    if not copilot_debug_enabled() or not is_copilot_api_url(url):
+        return
+
+    headers_json = json.dumps(
+        redact_for_wire_debug(_copilot_debug_header_subset(headers)),
+        ensure_ascii=False,
+        default=str,
+        separators=(",", ":"),
+    )
+    logger.info(
+        "event=copilot_debug_response request_id=%s endpoint=%s method=POST url=%s "
+        "model=%s status_code=%s headers=%s error_preview=%s",
+        request_id,
+        _copilot_debug_endpoint_label(url),
+        url,
+        model or "unknown",
+        status_code,
+        headers_json,
+        _copilot_debug_error_preview_from_bytes(error_content),
+    )
 
 
 def _parse_completion_tokens_from_sse_chunk(chunk_bytes: bytes) -> int | None:
@@ -1025,6 +1128,14 @@ class StreamingMixin:
                     status_code=upstream_response.status_code,
                 )
 
+            _log_copilot_debug_streaming_error(
+                request_id=request_id,
+                url=url,
+                model=model,
+                status_code=upstream_response.status_code,
+                headers=response_headers,
+                error_content=error_content,
+            )
             stream_state["total_bytes"] = len(error_content)
             await self._finalize_stream_response(
                 body=body,

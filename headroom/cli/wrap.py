@@ -39,6 +39,7 @@ import click
 from headroom._version import __version__ as _HEADROOM_VERSION
 from headroom.copilot_auth import (
     copilot_debug_enabled,
+    fetch_copilot_model_catalog,
     has_oauth_auth,
     resolve_client_bearer_token,
     resolve_copilot_api_url,
@@ -226,6 +227,7 @@ def _start_proxy(
         proxy_env.setdefault("HEADROOM_STACK", f"wrap_{agent_type}")
     if openai_api_url:
         proxy_env["OPENAI_TARGET_API_URL"] = openai_api_url
+        proxy_env["GITHUB_COPILOT_API_URL"] = openai_api_url
     # Pin the wrapper-validated Copilot token for this proxy instance only.
     # Injected into the subprocess env here (not the parent's os.environ) so it
     # never leaks into shared state. The proxy's CopilotTokenProvider honours
@@ -1583,6 +1585,58 @@ def _copilot_model_configured(copilot_args: tuple[str, ...], env: dict[str, str]
     return _copilot_model_configured_impl(copilot_args, env)
 
 
+def _normalize_copilot_model_id(model: str) -> str:
+    return model.strip().lower().rsplit("/", 1)[-1]
+
+
+def _copilot_catalog_model_ids(catalog: list[dict[str, Any]]) -> list[str]:
+    ids: list[str] = []
+    seen: set[str] = set()
+    for item in catalog:
+        model_id = str(item.get("id") or "").strip()
+        if not model_id:
+            continue
+        normalized = _normalize_copilot_model_id(model_id)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        ids.append(model_id)
+    return ids
+
+
+def _validate_copilot_subscription_model_available(
+    *,
+    model: str | None,
+    token: str,
+    api_url: str,
+    debug_enabled: bool = False,
+) -> None:
+    """Fail early when Copilot's model catalog does not include the requested model."""
+
+    if not model:
+        return
+
+    try:
+        catalog = fetch_copilot_model_catalog(token, api_url=api_url)
+    except Exception as exc:
+        if debug_enabled or copilot_debug_enabled():
+            click.echo(f"  COPILOT_DEBUG_MODEL_CATALOG_ERROR={type(exc).__name__}: {exc}")
+        return
+
+    requested = _normalize_copilot_model_id(model)
+    available = _copilot_catalog_model_ids(catalog)
+    if requested in {_normalize_copilot_model_id(model_id) for model_id in available}:
+        return
+
+    available_text = ", ".join(available) if available else "(none returned)"
+    raise click.ClickException(
+        "GitHub Copilot subscription model "
+        f"'{model}' is not available for this account at {api_url}. "
+        f"Available models: {available_text}. "
+        "Choose one of those models or check the organization's Copilot model policy."
+    )
+
+
 def _resolve_copilot_wire_api(
     *,
     wire_api: str | None,
@@ -2607,12 +2661,19 @@ def copilot(
         )
         env["GITHUB_COPILOT_API_URL"] = openai_api_url
         env["OPENAI_TARGET_API_URL"] = openai_api_url
+        selected_copilot_model = _copilot_selected_model(copilot_args, env)
+        _validate_copilot_subscription_model_available(
+            model=selected_copilot_model,
+            token=client_bearer,
+            api_url=openai_api_url,
+            debug_enabled=debug_enabled,
+        )
         env_vars_display.append(f"COPILOT_PROVIDER_API_URL={openai_api_url}")
         if debug_enabled:
             env_vars_display.extend(
                 [
                     "HEADROOM_COPILOT_DEBUG=1",
-                    f"COPILOT_DEBUG_MODEL={_copilot_selected_model(copilot_args, env) or '(not set)'}",
+                    f"COPILOT_DEBUG_MODEL={selected_copilot_model or '(not set)'}",
                     f"COPILOT_DEBUG_WIRE_API={effective_wire_api}",
                     f"COPILOT_DEBUG_API_URL={openai_api_url}",
                     (
